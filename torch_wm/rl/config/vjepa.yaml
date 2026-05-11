@@ -1,0 +1,91 @@
+defaults:
+  logdir: runs/wm_vjepa
+  seed: 0
+  task: carla_navigation
+  num_envs: 1
+  device: cuda
+  precision: 16-mixed
+
+  encoder_type: "vjepa_encoder"
+  dynamics_type: "vjepa_predictor"
+
+  checkpoint_path: "models/vjepa2_1_vitl_dist_vitG_384.pt"
+  image_size: [360, 640]
+  patch_size: 16
+  tubelet_size: 2
+
+  stoch_size: 16
+  discrete: 16
+  hidden_size: 128
+  num_blocks_trans: 1
+  att_context_left: 8
+
+  model_lr: 1e-4
+  actor_lr: 3e-5
+  critic_lr: 3e-5
+  adam_eps: 1e-8
+  warmup_steps: 100
+  total_steps: 1000
+  min_lr_ratio: 0.1
+  grad_clip: 10.0
+  weight_decay: 1e-6
+  horizon: 10
+  batch_size: 1
+  batch_length: 4
+
+  gamma: 0.997
+  lambda_td: 0.95
+  H: 10
+  target_value_reg: False
+  actor_entropy: 3e-4
+
+  modules:
+    losses:
+      kl: {enabled: true, weight: 0.1, free_nats: 1.0}
+      reconstruction: {enabled: false, weight: 0.0}
+      reward: {enabled: true, weight: 1.0}
+      discount: {enabled: true, weight: 5.0}
+      cpc: {enabled: true, weight: 0.1}
+      vcreg: {enabled: true, var_weight: 1.0, cov_weight: 1.0}
+
+  replay_size: 1e6
+  replay_min: 500
+
+  steps: 1e6
+  eval_every: 1e4
+  eval_episodes: 2
+  log_every: 50
+  save_every: 5000
+  train_ratio: 8
+  train_fill: 500
+
+  run:
+    actor_dist_disc: onehot
+    sync_every: 1
+    expl_until: 0
+    log_keys_video: [camera]
+    log_zeros: False
+    log_keys_sum: '^reward$'
+    log_keys_mean: '^reward$'
+    log_keys_max: '^reward$'
+    from_checkpoint: ''
+
+  wrapper:
+    length: 4000
+    reset: True
+    discretize: 0
+    checks: False
+    repeat: 1
+
+  env_params:
+    num_vehicles: 15
+    success_dist: 500
+    observation:
+      camera:
+        decode: True
+        attributes: {image_size_x: 640, image_size_y: 360}
+      birdeye_wpt: {tssm: false, decode: false, signal: false}
+    world:
+      carla_port: 2000
+      town: Town01
+      fixed_delta_seconds: 0.1

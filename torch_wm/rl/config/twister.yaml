@@ -1,0 +1,246 @@
+defaults:
+  logdir: runs/wm_twister
+  seed: 0
+  task: carla_navigation
+  num_envs: 1
+  device: cuda
+  precision: 16-mixed
+
+  dynamics_type: "tssm"
+  stoch_size: 16
+  discrete: 16
+  hidden_size: 1024
+  num_blocks_trans: 1
+  att_context_left: 32
+
+  # Neural Network Capacity
+  dim_cnn: 32
+  encoder_dim_layers: [32, 64, 128, 256]
+  decoder_dim_layers: [256, 128, 64, 32, 3]
+
+  # Temporal Contrastive Settings
+  contrastive_steps: 1
+  contrastive_offsets: [3]
+  uniform_mix: 0.01
+
+  # Replay Buffer
+  replay_size: 1e6
+
+  # Run Control
+  steps: 1e8
+  eval_every: 1e4
+  eval_episodes: 1
+  log_every: 500
+  save_every: 600
+  train_ratio: 512
+  train_fill: 0
+  replay_min: 500
+  tensorboard: False
+  wandb: True
+  wandb_project: "carTwister-twister"
+
+  run:
+    script: train
+    expl_until: 0
+    eval_initial: True
+    eval_samples: 1
+    eval_fill: 0
+    actor_dist_disc: onehot
+    actor_dist_cont: normal
+    actor_grad_disc: reinforce
+    actor_grad_cont: backprop
+    critic_type: vfunction
+    imag_horizon: 15
+    imag_unroll: False
+    horizon: 333
+    return_lambda: 0.95
+    critic_slowreg: logprob
+    slow_critic_update: 1
+    slow_critic_fraction: 0.02
+    retnorm: { impl: perc_ema, decay: 0.99, max: 1.0, perclo: 5.0, perchi: 95.0 }
+    actent: 3e-4
+    imag_smoothness_scale: 1e-4
+    sync_every: 10
+    log_zeros: False
+    log_keys_video: [none]
+    log_keys_sum: "^$"
+    log_keys_mean: "(log_entropy)"
+    log_keys_max: "^$"
+    from_checkpoint: ""
+
+  # Optimization (DreamerV3 style)
+  model_opt:
+    {
+      opt: adam,
+      lr: 3e-4,
+      eps: 1e-8,
+      clip: 1000.0,
+      wd: 0.0,
+      warmup: 0,
+      decay_steps: 5e7,
+      min_lr: 4e-5,
+      lateclip: 0.0,
+    }
+  actor_opt:
+    {
+      opt: adam,
+      lr: 4e-5,
+      eps: 1e-5,
+      clip: 100.0,
+      wd: 0.0,
+      warmup: 0,
+      decay_steps: 5e7,
+      min_lr: 1e-6,
+      lateclip: 0.0,
+    }
+  critic_opt:
+    {
+      opt: adam,
+      lr: 4e-5,
+      eps: 1e-5,
+      clip: 100.0,
+      wd: 0.0,
+      warmup: 0,
+      decay_steps: 5e7,
+      min_lr: 1e-5,
+      lateclip: 0.0,
+    }
+
+  # Agent Architecture Details
+  reward_head:
+    {
+      layers: 5,
+      units: 1024,
+      act: silu,
+      norm: layer,
+      dist: symlog_disc,
+      outscale: 0.0,
+      outnorm: False,
+      inputs: [deter, stoch],
+      winit: normal,
+      fan: avg,
+      bins: 255,
+    }
+  cont_head:
+    {
+      layers: 5,
+      units: 1024,
+      act: silu,
+      norm: layer,
+      dist: binary,
+      outscale: 1.0,
+      outnorm: False,
+      inputs: [deter, stoch],
+      winit: normal,
+      fan: avg,
+    }
+
+  actor:
+    {
+      layers: 5,
+      units: 1024,
+      act: silu,
+      norm: layer,
+      minstd: 0.1,
+      maxstd: 1.0,
+      outscale: 1.0,
+      outnorm: False,
+      unimix: 0.01,
+      inputs: [deter, stoch],
+      winit: normal,
+      fan: avg,
+      symlog_inputs: False,
+    }
+  critic:
+    {
+      layers: 5,
+      units: 1024,
+      act: silu,
+      norm: layer,
+      dist: symlog_disc,
+      outscale: 0.0,
+      outnorm: False,
+      inputs: [deter, stoch],
+      winit: normal,
+      fan: avg,
+      bins: 255,
+      symlog_inputs: False,
+    }
+
+  # Loss Scales
+  loss_scales:
+    {
+      image: 1.5,
+      vector: 1.0,
+      reward: 1.0,
+      cont: 1.0,
+      dyn: 0.5,
+      rep: 0.1,
+      actor: 1.0,
+      critic: 1.0,
+      slowreg: 1.0,
+    }
+
+  # Modules & Losses
+  modules:
+    losses:
+      kl: { enabled: true, weight: 1.0, free_nats: 1.0, prior_scale: 0.5, post_scale: 0.1 }
+      reconstruction: { enabled: true, weight: 1.5 }
+      joint_embedding: { enabled: true, weight: 10.0 }
+      reward: { enabled: true, weight: 1.0 }
+      discount: { enabled: true, weight: 1.0 }
+      sigreg: { enabled: true, weight: 0.1 }
+
+  # Agent Params
+  task_behavior: Greedy
+  expl_behavior: None
+  batch_size: 32
+  batch_length: 64
+  data_loaders: 20
+  H: 15
+  gamma: 0.999
+  lambda_td: 0.95
+  actor_entropy: 3e-4
+
+  # Wrapper Config
+  wrapper:
+    length: 0
+    reset: True
+    discretize: 0
+    checks: False
+    repeat: 1
+
+  # CARLA Env Params
+  env_params:
+    num_vehicles: 15
+    success_dist: 500
+    reward:
+      desired_speed: 15.0
+      scales:
+        collision: 20.0
+        proximity: 10.0
+        traffic_light_obey: 2.0
+        traffic_light_violate: 30.0
+        stop_sign: 10.0
+        speeding: 5.0
+        speed: 1.0
+        waypoint: 2.0
+        out_of_lane: 5.0
+        centerline: 1.0
+        heading: 0.5
+        destination_reached: 50.0
+        time: 0.1
+
+    action:
+      discrete_acc: [-3.0, -1.0, 0.0, 1.0, 3.0]
+      discrete_steer: [-1.0, -0.8, -0.6, -0.4, -0.2, 0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+    observation:
+      camera:
+        decode: True
+        pretrained: { enabled: true, backbone: "resnet18", freeze: true }
+        attributes: { image_size_x: 64, image_size_y: 64 }
+      birdeye_wpt: { tssm: false, decode: false, signal: false }
+    world:
+      carla_port: 2000
+      town: Town01
+      fixed_delta_seconds: 0.1
