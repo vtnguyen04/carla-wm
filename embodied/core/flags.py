@@ -12,7 +12,7 @@ class Flags:
         self._config = config.Config(*args, **kwargs)
 
     def parse(self, argv=None, help_exists=True):
-        parsed, remaining = self.parse_known(argv)
+        parsed, remaining = self.parse_known(argv, help_exists)
         for flag in remaining:
             if flag.startswith("--"):
                 raise ValueError(f"Flag '{flag}' did not match any config keys.")
@@ -26,7 +26,9 @@ class Flags:
             log.info("\nHelp:")
             lines = str(self._config).split("\n")[2:]
             log.info("\n".join("--" + re.sub(r"[:,\[\]]", "", x) for x in lines))
-            help_exists and sys.exit()
+            if help_exists:
+                sys.exit()
+            argv = [x for x in argv if x != "--help"]
         parsed = {}
         remaining = []
         key = None

@@ -10,7 +10,14 @@ def test_model():
     path = os.path.join(os.path.dirname(__file__), "../../torch_wm/rl/config/dreamerv3.yaml")
     model_configs = yaml.YAML(typ='safe').load(open(path))
     config = AttrDict(model_configs['defaults'])
-    model = WMAgent(env_name="test_env", override_config=config, skip_env=True)
+    if 'env_params' in model_configs:
+        config.env_params = model_configs['env_params']
+    if 'display' in model_configs:
+        config.display = model_configs['display']
+    class Space:
+        def __init__(self, shape): self.shape = shape
+    obs_space = {'camera': Space((3, 64, 64))}
+    model = WMAgent(env_name="test_env", override_config=config, skip_env=True, obs_space=obs_space)
     model.compile()
     
     # We must mock detached_posts from the world_model
@@ -23,7 +30,7 @@ def test_model():
     discrete = model.config.discrete
     rssm_dim = model.config.hidden_size
     rssm_layers = model.config.num_blocks_trans
-    att_context_left = model.config.att_context_left
+    att_context_left = model.config.get("att_context_left", 1)
     H = model.config.get("H", 15)
     
     model.detached_posts = {
@@ -39,13 +46,17 @@ def test_model():
     # Needs some reward tracking for lambda returns
     import unittest.mock
     mock_dist = unittest.mock.MagicMock()
-    mock_dist.mode = torch.randn(N, 1 + H, 1)
+    mock_mean = torch.randn(N, 1 + H, 1)
+    mock_dist.mean = unittest.mock.MagicMock(return_value=mock_mean)
+    mock_dist.mode = mock_mean
     
     model.reward_network.forward = unittest.mock.MagicMock(return_value=mock_dist)
     model.continue_network.forward = unittest.mock.MagicMock(return_value=mock_dist)
     
     mock_dist_v = unittest.mock.MagicMock()
-    mock_dist_v.mode = torch.randn(N, 1 + H, 1)
+    mock_mean_v = torch.randn(N, 1 + H, 1)
+    mock_dist_v.mean = unittest.mock.MagicMock(return_value=mock_mean_v)
+    mock_dist_v.mode = mock_mean_v
     model.v_target.forward = unittest.mock.MagicMock(return_value=mock_dist_v)
     
     return model
@@ -60,7 +71,8 @@ def test_actor_critic_forward(test_model):
     d = torch.zeros(B, L, dtype=torch.bool)
     f = torch.zeros(B, L, dtype=torch.bool)
     f[:, 0] = True
-    inputs = ({}, a, r, d, f)
+    s = {'camera': torch.zeros(B, L, 64, 64, 3, dtype=torch.uint8)}
+    inputs = (s, a, r, d, f)
     
     # Test ActorModel
     actor_loss = test_model.actor_model(inputs)

@@ -71,10 +71,17 @@ class RSSM(nn.Module):
 
         if self.learn_initial:
             self.initial_deter_param = nn.Parameter(torch.zeros(self.hidden_size))
+            stoch_dim = self.stoch_size * self.discrete if self.discrete else self.stoch_size
+            self.initial_stoch_param = nn.Parameter(torch.zeros(stoch_dim))
 
     def _gru_cell(self, x, deter):
-        # x: input from img_in
-        # deter: previous deterministic state
+        # x: input from img_in (B, D) or (B, 1, D)
+        # deter: previous deterministic state (B, 1, D) or (B, D)
+        if x.dim() != deter.dim():
+            if x.dim() < deter.dim():
+                x = x.unsqueeze(1)
+            else:
+                deter = deter.unsqueeze(1)
         gru_input = torch.cat([deter, x], dim=-1)
         gates = self.gru(gru_input)
         reset, cand, update = torch.chunk(gates, 3, dim=-1)
@@ -127,23 +134,46 @@ class RSSM(nn.Module):
             initial_state.stoch = torch.zeros(batch_size, seq_length, self.stoch_size, dtype=dtype, device=device)
 
         if self.learn_initial:
-            initial_state.deter = self.initial_deter_param.repeat(batch_size, seq_length, 1)
-            initial_state.stoch = self.get_stoch(initial_state.deter)
+            deter_param = self.initial_deter_param.to(device)
+            stoch_param = self.initial_stoch_param.to(device)
+            
+            initial_state.deter = deter_param.reshape(1, 1, -1).repeat(batch_size, seq_length, 1)
+            if self.discrete:
+                initial_state.logits = stoch_param.reshape(1, 1, self.stoch_size, self.discrete).repeat(batch_size, seq_length, 1, 1)
+                initial_state.stoch = self.get_dist(AttrDict(logits=initial_state.logits)).sample()
+            else:
+                initial_state.mean = stoch_param.reshape(1, 1, -1).repeat(batch_size, seq_length, 1)
+                initial_state.std = torch.ones_like(initial_state.mean)
+                initial_state.stoch = self.get_dist(AttrDict(mean=initial_state.mean, std=initial_state.std)).sample()
             if detach_learned:
                 initial_state.deter = initial_state.deter.detach()
                 initial_state.stoch = initial_state.stoch.detach()
         return initial_state
-
     def img_step(self, prev_state, prev_action):
+        # Enforce 2D for single step
+        if prev_state is not None:
+            prev_state = {k: v.squeeze(1) if isinstance(v, torch.Tensor) and v.dim() >= 3 and v.shape[1] == 1 else v for k, v in prev_state.items()}
+        if isinstance(prev_action, torch.Tensor) and prev_action.dim() >= 3 and prev_action.shape[1] == 1:
+            prev_action = prev_action.squeeze(1)
+
         prev_stoch = prev_state["stoch"]
-        if self.action_clip > 0.0:
+        if isinstance(self.action_clip, (int, float)) and self.action_clip > 0.0 and prev_action is not None:
             clip_val = torch.clip(torch.abs(prev_action), min=self.action_clip)
             prev_action = prev_action * (self.action_clip / clip_val).detach()
 
         if self.discrete:
-            prev_stoch = prev_stoch.reshape(prev_stoch.shape[:-2] + (self.stoch_size * self.discrete,))
+            # Flatten stoch: (B, stoch, disc) -> (B, stoch * disc)
+            if prev_stoch.shape[-2:] == (self.stoch_size, self.discrete):
+                prev_stoch = prev_stoch.reshape(prev_stoch.shape[:-2] + (-1,))
 
-        x = torch.cat([prev_stoch, prev_action], dim=-1)
+        # Robust dimension matching for concatenation
+        if prev_action is not None and prev_stoch.dim() != prev_action.dim():
+            if prev_stoch.dim() == 2 and prev_action.dim() == 1:
+                prev_action = prev_action.unsqueeze(0)
+            elif prev_stoch.dim() == 3 and prev_action.dim() == 2:
+                prev_action = prev_action.unsqueeze(1)
+
+        x = torch.cat([prev_stoch, prev_action], dim=-1) if prev_action is not None else prev_stoch
         x = self.img_in(x)
         deter = self._gru_cell(x, prev_state["deter"])
 
@@ -156,9 +186,18 @@ class RSSM(nn.Module):
         return prior
 
     def obs_step(self, prev_state, prev_action, embed, is_first):
-        is_first = is_first.to(prev_action.dtype)
+        # Enforce 2D for single step
+        if prev_state is not None:
+            prev_state = {k: v.squeeze(1) if isinstance(v, torch.Tensor) and v.dim() >= 3 and v.shape[1] == 1 else v for k, v in prev_state.items()}
+        if isinstance(prev_action, torch.Tensor) and prev_action.dim() >= 3 and prev_action.shape[1] == 1:
+            prev_action = prev_action.squeeze(1)
+        if isinstance(embed, torch.Tensor) and embed.dim() >= 3 and embed.shape[1] == 1:
+            embed = embed.squeeze(1)
+            
+        if is_first is not None:
+            is_first = is_first.to(prev_action.dtype) if prev_action is not None else is_first.float()
 
-        if self.action_clip > 0.0:
+        if isinstance(self.action_clip, (int, float)) and self.action_clip > 0.0 and prev_action is not None:
             clip_val = torch.clip(torch.abs(prev_action), min=self.action_clip)
             prev_action = prev_action * (self.action_clip / clip_val).detach()
 
@@ -172,7 +211,11 @@ class RSSM(nn.Module):
         for k, v in prev_state.items():
             if v is not None:
                 mask_v = mask.view(*mask.shape, *([1] * (v.dim() - mask.dim())))
-                masked_prev_state[k] = v * mask_v + init_state[k] * (1.0 - mask_v)
+                if k in init_state:
+                    masked_prev_state[k] = v * mask_v + init_state[k] * (1.0 - mask_v)
+                else:
+                    # Handle extra keys (like prev_action) added by agent wrapper
+                    masked_prev_state[k] = v * mask_v
             else:
                 masked_prev_state[k] = None
 
@@ -180,6 +223,14 @@ class RSSM(nn.Module):
         masked_prev_action = prev_action * mask_a
 
         prior = self.img_step(masked_prev_state, masked_prev_action)
+        
+        # Align embed dimension with prior['deter']
+        if embed.dim() != prior["deter"].dim():
+            if embed.dim() < prior["deter"].dim():
+                embed = embed.unsqueeze(1)
+            else:
+                # This case is unlikely given RSSM structure, but handle for robustness
+                prior["deter"] = prior["deter"].unsqueeze(1)
 
         x = torch.cat([prior["deter"], embed], dim=-1)
         x_out = self.obs_out(x)
@@ -263,16 +314,24 @@ class RSSM(nn.Module):
         deter = state["deter"]
 
         # Flatten discrete stochastic representations
-        if stoch.dim() == 4:
-            stoch = stoch.reshape(stoch.shape[0], stoch.shape[1], -1)
-        elif stoch.dim() == 3 and self.discrete and stoch.shape[-2:] == (self.stoch_size, self.discrete):
-            stoch = stoch.reshape(stoch.shape[0], -1)
+        if self.discrete:
+            # Handle (B, L, stoch, disc), (B, stoch, disc), or even with extra singleton dims
+            if stoch.shape[-2:] == (self.stoch_size, self.discrete):
+                stoch = stoch.reshape(stoch.shape[:-2] + (-1,))
+
+        # Squeeze singleton temporal dimensions if they leaked in
+        # We want (B, L, D) or (B, D)
+        if stoch.dim() > 3 and stoch.shape[2] == 1:
+            stoch = stoch.squeeze(2)
+        if deter.dim() > 3 and deter.shape[2] == 1:
+            deter = deter.squeeze(2)
 
         # Broadcast missing time dimensions if necessary
-        if stoch.dim() == 3 and deter.dim() == 2:
-            deter = deter.unsqueeze(1).expand(-1, stoch.shape[1], -1)
-        elif stoch.dim() == 2 and deter.dim() == 3:
-            stoch = stoch.unsqueeze(1).expand(-1, deter.shape[1], -1)
+        if stoch.dim() != deter.dim():
+            if stoch.dim() == 3 and deter.dim() == 2:
+                deter = deter.unsqueeze(1).expand(-1, stoch.shape[1], -1)
+            elif stoch.dim() == 2 and deter.dim() == 3:
+                stoch = stoch.unsqueeze(1).expand(-1, deter.shape[1], -1)
 
         return torch.cat([stoch, deter], dim=-1)
 

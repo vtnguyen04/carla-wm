@@ -159,8 +159,8 @@ class WMAgent(BaseModel):
             num_actions,
             **get_head_kwargs("actor", {"hidden_size": self.config.hidden_size, "num_mlp_layers": 5}, include_bins=False),
             feat_size=feat_size,
-            discrete=self.config.discrete_actions,
-            uniform_mix=self.config.uniform_mix,
+            discrete=getattr(self.config, "discrete_actions", True),
+            uniform_mix=getattr(self.config, "uniform_mix", 0.01),
         )
         self.value_network = networks.ValueNetwork(
             **get_head_kwargs("critic", {"hidden_size": self.config.hidden_size, "num_mlp_layers": 5}),
@@ -248,11 +248,11 @@ class WMAgent(BaseModel):
             dist = self.policy_network(feat)
             
             # Safe mode/sample access
-            if sample:
-                action = dist.sample()
-            else:
-                action = dist.mode() if callable(dist.mode) else dist.mode
-                
+            action = dist.sample() if sample else (dist.mode() if callable(getattr(dist, "mode", None)) else dist.mode)
+            
+            # Ensure action is 3D (B, 1, D) for the next observation step
+            if action.dim() == 2:
+                action = action.unsqueeze(1)
             self._prev_action = action
             
             # State for RL wrapper must include prev_action
@@ -584,10 +584,19 @@ class WMAgent(BaseModel):
         
         dummy_batch = AttrDict()
         # 1. Image Modalities from Encoders
-        for name, encoder in self.encoder_network.encoders.items():
-            h, w = encoder.image_size
-            c = encoder.dim_input_cnn
-            dummy_batch[name] = torch.zeros(batch_size, batch_length, c, h, w, device=self.device)
+        encoders = getattr(self.encoder_network, "encoders", {})
+        if encoders:
+            for name, encoder in encoders.items():
+                h, w = encoder.image_size
+                c = getattr(encoder, "dim_input_cnn", 3)
+                dummy_batch[name] = torch.zeros(batch_size, batch_length, c, h, w, device=self.device)
+        elif hasattr(self.encoder_network, "image_size"):
+            # Single encoder (e.g. V-JEPA)
+            h, w = self.encoder_network.image_size
+            dummy_batch["camera"] = torch.zeros(batch_size, batch_length, 3, h, w, device=self.device)
+        else:
+            # Absolute fallback
+            dummy_batch["camera"] = torch.zeros(batch_size, batch_length, 3, 64, 64, device=self.device)
         
         # 2. Standard RL keys
         dummy_batch["is_first"] = torch.zeros(batch_size, batch_length, device=self.device)
@@ -597,14 +606,16 @@ class WMAgent(BaseModel):
         
         # Preprocess images (converts to [-0.5, 0.5] if needed)
         for k in dummy_batch:
-            if k in self.encoder_network.encoders:
+            if hasattr(self.encoder_network, "encoders") and k in self.encoder_network.encoders:
                 dummy_batch[k] = self.preprocess_inputs(dummy_batch[k], True)
 
         # 3. Trigger forward pass to initialize LazyLinear in LossManager/JEPA
         with torch.no_grad():
-            # Construct tuple for WorldModel.forward(self, inputs)
             # s: dict of sensors, a: actions, r: rewards, d: dones, f: is_firsts
-            s_dict = {k: v for k, v in dummy_batch.items() if k in self.encoder_network.encoders}
+            if hasattr(self.encoder_network, "encoders"):
+                s_dict = {k: v for k, v in dummy_batch.items() if k in self.encoder_network.encoders}
+            else:
+                s_dict = {"camera": dummy_batch.get("camera")} # Fallback for single image encoder like V-JEPA
             a = dummy_batch.action
             r = dummy_batch.reward
             d = 1.0 - dummy_batch.discount

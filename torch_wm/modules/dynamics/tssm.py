@@ -255,7 +255,7 @@ class TSSM(nn.Module):
             return 0
 
     def forward_img(self, prev_states, prev_actions, mask, return_att_w=False, return_blocks_deter=False):
-        if self.action_clip > 0.0:
+        if isinstance(self.action_clip, (int, float)) and self.action_clip > 0.0:
             prev_actions = prev_actions * (self.action_clip / torch.clip(torch.abs(prev_actions), min=self.action_clip)).detach()
         batch_size = prev_actions.shape[0]
         seq_len = prev_actions.shape[1]
@@ -287,7 +287,7 @@ class TSSM(nn.Module):
             prev_actions = prev_actions.reshape(prev_actions.shape[0], -1, self.num_actions)
         if is_firsts.dim() == 1:
             is_firsts = is_firsts.unsqueeze(1)
-        if self.action_clip > 0.0:
+        if isinstance(self.action_clip, (int, float)) and self.action_clip > 0.0:
             prev_actions *= (self.action_clip / torch.clip(torch.abs(prev_actions), min=self.action_clip)).detach()
         mask = modules.return_mask(seq_len=prev_actions.shape[1], hidden_len=self.get_hidden_len(prev_states["hidden"]), left_context=self.att_context_left, right_context=0, dtype=prev_actions.dtype, device=prev_actions.device)
         if is_firsts.any():

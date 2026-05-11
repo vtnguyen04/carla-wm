@@ -125,10 +125,28 @@ class WorldModelAgent(embodied.Agent):
         # Fallback to observation space if needed
         if "action" in self.act_space:
             space = self.act_space["action"]
-            if hasattr(space, "n") and space.n > 0: 
-                c.num_actions = space.n
-            elif hasattr(space, "shape") and len(space.shape) > 0 and space.shape[-1] > 0:
+            if hasattr(space, "n") and isinstance(space.n, (int, np.integer)) and space.n > 0: 
+                c.num_actions = int(space.n)
+                c.discrete_actions = True
+            elif getattr(space, "discrete", False) is True or \
+                 (hasattr(space, "is_discrete") and space.is_discrete()) or \
+                 np.issubdtype(getattr(space, 'dtype', np.float32), np.integer):
+
+                # Handle discrete spaces with potentially empty shapes (scalars)
+                if hasattr(space, 'shape') and len(space.shape) > 0:
+                    c.num_actions = space.shape[-1]
+                elif hasattr(space, 'n'): # redundant but safe
+                    c.num_actions = int(space.n)
+                elif hasattr(space, 'high'):
+                    # In embodied, scalar discrete spaces often use 'high' for n
+                    c.num_actions = int(np.max(space.high))
+                else:
+                    c.num_actions = 1 # fallback
+                c.discrete_actions = True
+            elif hasattr(space, "shape") and isinstance(space.shape, (tuple, list)) and len(space.shape) > 0:
                 c.num_actions = space.shape[-1]
+                c.discrete_actions = False
+
         
         c.env_params = AttrDict()
         env_cfg = config.get("env", {})
@@ -206,6 +224,8 @@ class WorldModelAgent(embodied.Agent):
             state["prev_action"] = torch.zeros(B, 1, self.model.dynamics_model.num_actions, device=self.device)
         else:
             state = tree_map(lambda x: torch.as_tensor(x).to(self.device) if x is not None else None, state)
+            if "prev_action" not in state:
+                state["prev_action"] = torch.zeros(B, 1, self.model.dynamics_model.num_actions, device=self.device)
             if state["prev_action"].dim() == 2:
                 state["prev_action"] = state["prev_action"].unsqueeze(1)
 
@@ -305,6 +325,11 @@ class WorldModelAgent(embodied.Agent):
         add_grouped_metrics(act_loss_dict, "actor")
         add_grouped_metrics(crit_loss_dict, "critic")
         
+        # Add flat keys for test compatibility
+        metrics['wm_loss'] = wm_loss_dict.get('loss', torch.tensor(0.0)).item()
+        metrics['actor_loss'] = act_loss_dict.get('loss', torch.tensor(0.0)).item()
+        metrics['critic_loss'] = crit_loss_dict.get('loss', torch.tensor(0.0)).item()
+        
         # Add auxiliary metrics (grad norms, model-specific stats)
         for src in [wm_metrics, act_metrics, crit_metrics]:
             for k, v in src.items():
@@ -337,19 +362,9 @@ class WorldModelAgent(embodied.Agent):
         return {"model": cpu_state_dict, "updates": self._updates}
 
     def load(self, data):
-        import sys
-        print("\n" + "="*60, file=sys.stderr)
-        print("DEBUG: WorldModelAgent.load()", file=sys.stderr)
-        print("="*60, file=sys.stderr)
-        
         try:
             if not isinstance(data, dict):
-                print(f"DEBUG: Data is not a dict, it is {type(data)}. Attempting to unpack...", file=sys.stderr)
-                try:
-                    data = pack.unpack(data)
-                except Exception as e:
-                    print(f"DEBUG: Unpack failed: {e}", file=sys.stderr)
-                    return
+                data = embodied.pack.unpack(data)
 
             loaded_state_dict = data.get("model", data)
             current_state_dict = self.model.state_dict()
@@ -359,39 +374,27 @@ class WorldModelAgent(embodied.Agent):
                 if k not in current_state_dict:
                     continue
                 
-                # Get shapes reliably
                 if hasattr(v, "shape"):
                     v_shape = tuple(v.shape)
                 elif isinstance(v, (list, tuple)):
                     v_shape = tuple(torch.tensor(v).shape)
                 else:
-                    print(f"DEBUG: Key {k} has no shape attribute ({type(v)})", file=sys.stderr)
                     continue
                     
                 curr_shape = tuple(current_state_dict[k].shape)
-                
                 if v_shape == curr_shape:
                     if isinstance(v, torch.Tensor):
                         filtered_state_dict[k] = v.to(self.device)
                     else:
                         filtered_state_dict[k] = torch.from_numpy(v).to(self.device)
-                else:
-                    print(f"DEBUG: Shape mismatch for {k}: checkpoint {v_shape} != model {curr_shape}. Skipping.", file=sys.stderr)
 
-            # Load the filtered state dict
-            msg = self.model.load_state_dict(filtered_state_dict, strict=False)
-            print(f"DEBUG: Load complete. Mismatched shapes handled. Missing: {len(msg.missing_keys)}, Unexpected: {len(msg.unexpected_keys)}", file=sys.stderr)
-            
+            self.model.load_state_dict(filtered_state_dict, strict=False)
             self._updates = data.get("updates", 0)
             self.model.to(self.device)
             
         except Exception as e:
-            print(f"DEBUG: CRITICAL ERROR IN LOAD: {e}", file=sys.stderr)
-            import traceback
-            traceback.print_exc(file=sys.stderr)
-            
-        print("="*60 + "\n", file=sys.stderr)
-        sys.stderr.flush()
+            print(f"Error loading checkpoint: {e}")
+
 
 
 def tree_map(fn, tree):

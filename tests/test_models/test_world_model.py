@@ -17,7 +17,8 @@ def test_model():
     model.compile()
     
     # We must patch the metrics/losses internally to avoid real WandB / full training loop dependencies
-    model.world_model.loss_manager.active_losses = [] # disable all complex losses for unit test forward pass assertion
+    import torch.nn as nn
+    model.world_model.loss_manager.active_losses = nn.ModuleList([]) # disable all complex losses for unit test forward pass assertion
     
     return model
 

@@ -137,8 +137,14 @@ class MultiDecoderNetwork(nn.Module):
 
         # Dynamically create decoders for each enabled sensor with decode=True
         if obs_space is None:
+            # Fallback if obs_space is entirely missing
             obs_space = {}
-            for k in obs_config.get("enabled", []):
+            # If no 'enabled' list, use all keys that look like observations
+            enabled_keys = obs_config.get("enabled")
+            if enabled_keys is None:
+                enabled_keys = [k for k, v in obs_config.items() if isinstance(v, (dict, AttrDict))]
+                
+            for k in enabled_keys:
                 cfg = obs_config.get(k, {})
                 shape = cfg.get("shape", (3, 64, 64))
                 class SpaceStub:

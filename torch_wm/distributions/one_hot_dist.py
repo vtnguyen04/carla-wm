@@ -35,4 +35,4 @@ class OneHotDist(torch.distributions.one_hot_categorical.OneHotCategoricalStraig
 
   def mode(self):
     mode = super(OneHotDist, self).mode
-    return mode.detach() + (self.logits - self.logits.detach())
+    return mode.detach() + (self.logits - self.logits.detach()).nan_to_num()

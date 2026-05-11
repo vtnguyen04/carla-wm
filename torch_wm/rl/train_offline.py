@@ -226,6 +226,18 @@ def train_offline(agent, replay, config, logger: LogComposer):
 # ═══════════════════════════════════════════
 
 def main(argv=None):
+    if argv is None:
+        argv = sys.argv[1:]
+    if "--help" in argv:
+        print("Usage: train_offline.py")
+        temp_flags = embodied.Flags(method="dreamerv3")
+        parsed_temp, remaining = temp_flags.parse_known(argv)
+        config_path = pathlib.Path(__file__).resolve().parent / "config" / f"{parsed_temp.method}.yaml"
+        with open(config_path, "r") as f:
+            model_configs = yaml.YAML(typ="safe").load(f)
+        config = embodied.Config(model_configs["defaults"])
+        embodied.Flags(config).parse(remaining)
+
     # Initial flags to determine which config file to load
     temp_flags = embodied.Flags(method="dreamerv3")
     parsed_temp, remaining = temp_flags.parse_known(argv)

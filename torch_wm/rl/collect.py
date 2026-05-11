@@ -5,6 +5,7 @@ import pickle
 import ruamel.yaml as yaml
 from tqdm import tqdm
 import numpy as np
+import sys
 
 import carla_env
 from torch_wm.rl.agent import WorldModelAgent
@@ -104,6 +105,18 @@ def collect(agent, env, replay, logger, args):
 
 
 def main(argv=None):
+    if argv is None:
+        argv = sys.argv[1:]
+    if "--help" in argv:
+        print("Usage: collect.py")
+        model_configs = yaml.YAML(typ="safe").load(
+            (embodied.Path(__file__).parent / "config" / "dreamerv3.yaml").read()
+        )
+        config = embodied.Config(model_configs["defaults"])
+        config = config.update({"from_checkpoint": "none"})
+        # We don't load env config here to avoid CARLA connection
+        embodied.Flags(config).parse(argv)
+
     model_configs = yaml.YAML(typ="safe").load(
         (embodied.Path(__file__).parent / "config" / "dreamerv3.yaml").read()
     )

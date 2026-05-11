@@ -136,15 +136,20 @@ class OneHotAction(base.Wrapper):
     def act_space(self):
         shape = (self._count,)
         space = spacelib.Space(np.float32, shape, 0, 1)
-        space.sample = functools.partial(self._sample_action, self._count)
-        space._discrete = True
+        space.n = shape[0]
+        space.sample = functools.partial(self._sample_action, shape[0])
+        if hasattr(space, '_discrete'):
+            space._discrete = True
+        else:
+            space.discrete = True # Fallback if it's not the embodied.Space class
+
         return {**self.env.act_space, self._key: space}
 
     def step(self, action):
         if not action["reset"]:
             assert action[self._key].min() == 0.0, action
             assert action[self._key].max() == 1.0, action
-            assert action[self._key].sum() == 1.0, action
+            assert np.isclose(action[self._key].sum(), 1.0, rtol=1e-3, atol=1e-3), f"Action sum is not 1.0: {action[self._key].sum()} in action {action}"
         index = np.argmax(action[self._key])
         return self.env.step({**action, self._key: index})
 

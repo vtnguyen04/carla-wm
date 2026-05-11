@@ -54,6 +54,9 @@ def preprocess_obs(obs, device=None, precision="float32"):
     if isinstance(obs, dict):
         processed = {}
         for k, v in obs.items():
+            if v is None:
+                processed[k] = None
+                continue
             if not isinstance(v, torch.Tensor):
                 v = torch.as_tensor(np.array(v))
             if device is not None:

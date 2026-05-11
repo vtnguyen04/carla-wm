@@ -36,9 +36,17 @@ class ActorModel(BaseModel):
         object.__setattr__(self, "outer", outer)
 
     def forward(self, inputs):
-        s, a, r, d, f = inputs
+        # Handle dict or tuple inputs
+        if isinstance(inputs, dict):
+            s = {k: v for k, v in inputs.items() if k not in ["is_first", "is_last", "is_terminal", "action", "reward", "discount"]}
+            a = inputs.get("action")
+            r = inputs.get("reward")
+            d = 1.0 - inputs.get("discount", torch.ones_like(r))
+            f = inputs.get("is_first")
+        else:
+            s, a, r, d, f = inputs
 
-        img_states = self.outer.dynamics_model.imagine(self.outer.policy_network, self.outer.detached_posts, self.outer.config.H, self.outer.detached_is_firsts, self.outer.detached_is_firsts_hidden)
+        img_states = self.outer.dynamics_model.imagine(self.outer.policy_network, self.outer.detached_posts, self.outer.config.get("H", 15), self.outer.detached_is_firsts, self.outer.detached_is_firsts_hidden)
         feats = self.outer.dynamics_model.get_feat(img_states)
 
         # 1. Predict rewards, values and discounts from World Model heads
@@ -47,7 +55,7 @@ class ActorModel(BaseModel):
         model_rewards_dist = self.outer.reward_network(feats)
         model_rewards_mean = model_rewards_dist.mean() if callable(model_rewards_dist.mean) else model_rewards_dist.mean
 
-        if self.outer.config.target_value_reg:
+        if self.outer.config.get("target_value_reg", False):
             values_dist = self.outer.value_network(feats)
         else:
             values_dist = self.outer.v_target(feats)
@@ -86,13 +94,25 @@ class ActorModel(BaseModel):
         reinforce_loss = - (policy_log_prob * advantage * true_first.squeeze(-1)).mean()
 
         # 6. Entropy Regularization
-        # In twister.yaml, entropy is nested under 'actor'
-        actor_entropy_scale = self.outer.config.actor.entropy
-        entropy_bonus = policy_dist.entropy()[:, :-1].mean()
-
-        actor_loss = reinforce_loss - (actor_entropy_scale * entropy_bonus)
-
+        entropy = policy_dist.entropy()[:, :-1]
+        
+        # Defensive configuration access for entropy parameters
+        # Support both nested (config.actor.entropy) and flat (config.actor_entropy) structures
+        # Also handles cases where 'run' might be missing
+        entropy_scale = getattr(self.outer.config, "actor", {}).get("entropy")
+        if entropy_scale is None:
+            entropy_scale = getattr(self.outer.config, "run", {}).get("actor_entropy")
+        if entropy_scale is None:
+            entropy_scale = getattr(self.outer.config, "actor_entropy", 1e-3)
+            
+        entropy_loss = - entropy_scale * (entropy * true_first.squeeze(-1)).mean()
+        
+        actor_loss = reinforce_loss + entropy_loss
+        
         self.add_loss("actor", actor_loss)
+        self.add_loss("actor_reinforce", reinforce_loss)
+        self.add_loss("actor_entropy", entropy_loss)
+        
         self.outer.detached_feats = feats.detach()
         self.outer.detached_returns = returns.detach()
         return actor_loss

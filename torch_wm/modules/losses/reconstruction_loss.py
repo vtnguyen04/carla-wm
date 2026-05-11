@@ -90,7 +90,13 @@ class ReconstructionLoss(BaseLoss):
         else:
             # If we expected reconstructions but found no matching targets, log a warning
             logger.warning(f"Reconstruction loss: matched 0/{{len(reconstructions)}} keys in targets. Targets keys: {{list(targets.keys()) if isinstance(targets, dict) else 'not a dict'}}")
-            total_loss = torch.tensor(0.0, device=next(iter(reconstructions.values())).device if isinstance(reconstructions, dict) else reconstructions.device)
+            if isinstance(reconstructions, dict) and len(reconstructions) > 0:
+                device = next(iter(reconstructions.values())).device
+            elif not isinstance(reconstructions, dict):
+                device = reconstructions.device
+            else:
+                device = "cpu"
+            total_loss = torch.tensor(0.0, device=device)
             
         return total_loss
 

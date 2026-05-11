@@ -16,6 +16,7 @@ class VJEPAEncoderNetwork(nn.Module):
     def __init__(
         self,
         checkpoint_path="models/vjepa2_1_vitl_dist_vitG_384.pt",
+        vit_type="vit_large",
         patch_size=16,
         tubelet_size=2,
         freeze=True,
@@ -34,9 +35,12 @@ class VJEPAEncoderNetwork(nn.Module):
         self.discrete = discrete
         self.uniform_mix = uniform_mix
 
-        print(f"[V-JEPA Encoder] Initializing ViT-Large with RoPE, patch_size={patch_size}")
+        print(f"[V-JEPA Encoder] Initializing {vit_type} with RoPE, patch_size={patch_size}")
 
-        self.model = vit_large(
+        from torch_wm.modules.networks import vit
+        vit_fn = getattr(vit, vit_type, vit.vit_large)
+        
+        self.model = vit_fn(
             patch_size=patch_size,
             img_size=image_size,
             num_frames=tubelet_size,

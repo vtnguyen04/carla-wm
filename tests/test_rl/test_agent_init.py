@@ -40,6 +40,6 @@ def test_agent_policy():
     state = None
     
     # Use patch context manager correctly
-    with patch.object(agent.model, 'policy', return_value=({'action': torch.zeros(1, 10)}, MagicMock())):
+    with patch.object(agent.model, 'act', return_value=(torch.zeros(1, 10), MagicMock())):
         action, state = agent.policy(obs, state, mode='train')
         assert 'action' in action

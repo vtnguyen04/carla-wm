@@ -39,8 +39,16 @@ class WorldModel(BaseModel):
         self.loss_manager = LossManager(self.outer.config)
 
     def forward(self, inputs):
-        if len(inputs) == 6:
-            s, a, r, d, f, steps = inputs
+        # Handle dict inputs (standard in our agent pipeline)
+        if isinstance(inputs, dict):
+            s = {k: v for k, v in inputs.items() if k not in ["is_first", "is_last", "is_terminal", "action", "reward", "discount"]}
+            a = inputs.get("action")
+            r = inputs.get("reward")
+            d = 1.0 - inputs.get("discount", torch.ones_like(r))
+            f = inputs.get("is_first")
+        # Handle tuple inputs (backward compat / dry-run)
+        elif len(inputs) == 6:
+            s, a, r, d, f, _ = inputs
         else:
             s, a, r, d, f = inputs
             

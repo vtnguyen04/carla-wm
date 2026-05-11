@@ -216,12 +216,16 @@ class MultiEncoderNetwork(nn.Module):
         self._tssm_branches = []      # Branch names feeding world model
         self._signal_branches = []    # Branch names for policy conditioning only
 
-        print(f"[DEBUG Encoder] Init. obs_space: {obs_space}, obs_config: {obs_config}")
         # Dynamically create encoders for each enabled sensor
         if obs_space is None:
             # Fallback if obs_space is entirely missing
             obs_space = {}
-            for k in obs_config.get("enabled", []):
+            # If no 'enabled' list, use all keys that look like observations
+            enabled_keys = obs_config.get("enabled")
+            if enabled_keys is None:
+                enabled_keys = [k for k, v in obs_config.items() if isinstance(v, (dict, AttrDict))]
+                
+            for k in enabled_keys:
                 cfg = obs_config.get(k, {})
                 shape = cfg.get("shape", (3, 64, 64))
                 class SpaceStub:
@@ -238,6 +242,8 @@ class MultiEncoderNetwork(nn.Module):
             if not isinstance(config, AttrDict):
                 config = AttrDict(config)
             
+            # Filter kwargs to avoid multiple values for image_size
+            sub_kwargs = {k: v for k, v in kwargs.items() if k != "image_size"}
             image_size = (space.shape[1], space.shape[2])
             
             encoder = EncoderNetwork(
@@ -250,7 +256,7 @@ class MultiEncoderNetwork(nn.Module):
                 image_size=image_size,
                 stoch_size=stoch_size,
                 discrete=discrete,
-                **kwargs
+                **sub_kwargs
             )
             self.encoders[name] = encoder
 
