@@ -33,7 +33,7 @@ defaults:
   log_every: 100
   save_every: 400
   train_ratio: 512
-  train_fill: 0
+  train_fill: 1000
   replay_min: 500
   tensorboard: False
   wandb: True
@@ -46,19 +46,20 @@ defaults:
     eval_samples: 1
     eval_fill: 0
     actor_dist_disc: onehot
+    actor_entropy: 1e-2
     actor_dist_cont: normal
     actor_grad_disc: reinforce
     actor_grad_cont: backprop
     critic_type: vfunction
     imag_horizon: 15
     imag_unroll: False
-    entropy: 1e-3
+    entropy: 1e-2
     discount_lambda: 0.95
     critic_slowreg: logprob
     slow_critic_update: 1
     slow_critic_fraction: 0.02
     retnorm: { impl: perc_ema, decay: 0.99, max: 1.0, perclo: 5.0, perchi: 95.0 }
-    actent: 1e-3
+    actent: 1e-2
     imag_smoothness_scale: 1e-4
     sync_every: 10
     log_zeros: False
@@ -147,7 +148,7 @@ defaults:
       outnorm: False,
       unimix: 0.01,
       inputs: [deter, stoch],
-      entropy: 1e-3,
+      entropy: 1e-2,
       winit: normal,
       fan: avg,
       symlog_inputs: False,

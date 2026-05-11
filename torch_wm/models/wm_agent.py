@@ -246,7 +246,13 @@ class WMAgent(BaseModel):
             self._current_state = post
             feat = self.dynamics_model.get_feat(post)
             dist = self.policy_network(feat)
-            action = dist.sample() if sample else dist.mode()
+            
+            # Safe mode/sample access
+            if sample:
+                action = dist.sample()
+            else:
+                action = dist.mode() if callable(dist.mode) else dist.mode
+                
             self._prev_action = action
             
             # State for RL wrapper must include prev_action

@@ -42,19 +42,19 @@ class ActorModel(BaseModel):
         feats = self.outer.dynamics_model.get_feat(img_states)
 
         # 1. Predict rewards, values and discounts from World Model heads
-        # We use .mean() (expectation) instead of .mode() to provide a continuous gradient
-        # signal, which prevents the "zero-reward" problem in early training.
+        # We use expectation instead of mode to provide a continuous gradient.
+        # Handle both callable .mean() and property .mean for different dist types.
         model_rewards_dist = self.outer.reward_network(feats)
-        model_rewards_mean = model_rewards_dist.mean()
+        model_rewards_mean = model_rewards_dist.mean() if callable(model_rewards_dist.mean) else model_rewards_dist.mean
 
         if self.outer.config.target_value_reg:
             values_dist = self.outer.value_network(feats)
         else:
             values_dist = self.outer.v_target(feats)
-        values_mean = values_dist.mean()
+        values_mean = values_dist.mean() if callable(values_dist.mean) else values_dist.mean
 
         discounts_dist = self.outer.continue_network(feats)
-        discounts_mean = discounts_dist.mean()
+        discounts_mean = discounts_dist.mean() if callable(discounts_dist.mean) else discounts_dist.mean
 
         # 2. Prepare discounts (B', 1+H, 1)
         # We override the first step with ground truth continuation from the buffer.
