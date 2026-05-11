@@ -1,0 +1,187 @@
+env:
+  eval: False
+
+  world:
+    carla_port: 2000
+    town: "Town04" # which town map to use
+    actor_active_distance: 100
+    fixed_delta_seconds: 0.1
+    # MUST BE FALSE for Town01/Town02: 1-lane roads cause overtaking NPCs to drive onto the sidewalk!
+    auto_lane_change: False
+    traffic:
+      tm_seed: 2024
+
+  observation:
+    camera:
+      handler: camera
+      blueprint: sensor.camera.rgb
+      key: camera
+      shape: [256, 256, 3]
+      transform:
+        x: 1.5
+        z: 2.0
+      attributes:
+        image_size_x: 256
+        image_size_y: 256
+        fov: 120.0
+        sensor_tick: 0.1
+
+    # LiDAR sensor
+    lidar:
+      handler: lidar
+      blueprint: sensor.lidar.ray_cast
+      key: lidar
+      shape: [128, 128, 3]
+      lidar_bin: 0.25
+      ego_offset: 12
+      transform:
+        z: 2.1
+      attributes:
+        range: 32
+        channels: 32
+        sensor_tick: 0.1
+
+    # collision sensor
+    collision:
+      handler: collision
+      blueprint: sensor.other.collision
+      key: collision
+      shape: [1]
+
+    spectator:
+      handler: spectator
+      key: spectator
+      shape: [512, 512, 3]
+      height: 40
+      fov: 90
+      sensor_tick: 0.1
+      pitch: -90
+
+    # BEV with only roadmap, vehicles, and waypoints
+    birdeye_raw:
+      handler: birdeye
+      key: birdeye_raw
+      shape: [256, 256, 3]
+      obs_range: 32
+      ego_offset: 12
+      sight_fov: 150
+      sight_range: 32
+      observability: full # [full, recursive_fov, fov]
+      color_by_obs: False
+      waypoint_obs: visible # [neighbor, visible, all]
+      extend_wpt: False
+      entities: [roadmap, waypoints, ego_vehicle, background_vehicles]
+
+    # Render waypoints on BEV
+    birdeye_wpt:
+      handler: birdeye
+      key: birdeye_wpt
+      shape: [32, 32, 3]
+      obs_range: 32
+      ego_offset: 12
+      # sight_fov = 150 equivalent to [150, 150] for [front, rear] FOV
+      # Use [150, 90] to mimic human driver views
+      sight_fov: 150
+      sight_range: 32
+      observability: full
+      color_by_obs: False
+      waypoint_obs: visible
+      extend_wpt: False
+      entities:
+        [
+          roadmap,
+          waypoints,
+          # background_waypoints REMOVED - unrealistic to see other vehicles' intended paths
+          ego_vehicle,
+          background_vehicles,
+        ]
+
+    # Render all information on BEV
+    birdeye_gt:
+      handler: birdeye
+      key: birdeye_gt
+      shape: [256, 256, 3]
+      obs_range: 32
+      ego_offset: 12
+      sight_fov: 150
+      sight_range: 32
+      observability: full
+      color_by_obs: True
+      waypoint_obs: visible
+      extend_wpt: False
+      entities:
+        [
+          roadmap,
+          waypoints,
+          background_waypoints,
+          fov_lines,
+          ego_vehicle,
+          background_vehicles,
+        ]
+
+    # Render traffic sign on BEV
+    birdeye_with_traffic_lights:
+      handler: birdeye
+      key: birdeye_with_traffic_lights
+      shape: [256, 256, 3]
+      obs_range: 32
+      ego_offset: 12
+      sight_fov: 150
+      sight_range: 32
+      observability: full
+      color_by_obs: False
+      waypoint_obs: visible
+      extend_wpt: False
+      entities:
+        [
+          roadmap,
+          waypoints,
+          background_waypoints,
+          ego_vehicle,
+          background_vehicles,
+          traffic_lights,
+          stop_signs,
+        ]
+
+    birdeye_wpt_with_errors:
+      handler: birdeye
+      key: birdeye_wpt_with_errors
+      shape: [128, 128, 3]
+      obs_range: 32
+      ego_offset: 12
+      sight_fov: 150
+      sight_range: 32
+      observability: full
+      color_by_obs: False
+      waypoint_obs: visible
+      extend_wpt: False
+      error_rate: 0.2
+      entities: [roadmap, waypoints, error_background_waypoints, ego_vehicle, background_vehicles]
+
+  display:
+    enable: True
+    render_keys: [camera, birdeye_wpt]
+    image_size: 512
+    save_video: False
+    hires: False
+    use_local_window: False
+    show_window: True
+    no_monitor: False
+  action:
+    discrete: True
+    # Ultra-fine granularity for Expert Collection (11x21 = 231 actions)
+    discrete_acc: [-3.0, -1.0, 0.0, 1.0, 3.0]
+    discrete_steer: [-1.0, -0.8, -0.6, -0.4, -0.2, 0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+    continuous_acc: [-3.0, 3.0]
+    continuous_steer: [-1.0, 1.0]
+    n_commands: 3
+
+  # action:
+  #   discrete: True
+  #   # Discrete control space. Use continuos_acc and continuous_steer if discrete is False
+  #   # Finer granularity near center for smoother driving
+  #   discrete_acc: [-2.0, -1.0, 0.0, 1.0, 2.0] # 5 acceleration levels for smoother control
+  #   discrete_steer: [-0.6, -0.3, -0.1, -0.03, 0.0, 0.03, 0.1, 0.3, 0.6] # 9 steering levels, fine near center
+  #   continuous_acc: [-3.0, 3.0] # continuous value of accelerations
+  #   continuous_steer: [-1.0, 1.0] # continuous value of steering angles
+  #   n_commands: 3 # number of text commands for message handler
