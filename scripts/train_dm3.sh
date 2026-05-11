@@ -19,7 +19,7 @@ export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:32
 export CUDA_VISIBLE_DEVICES=$GPU_DEVICE
 
 # Adjust CARLA root path if necessary
-CARLA_SERVER_COMMAND="$CARLA_ROOT/CarlaUE4.sh -RenderOffScreen -carla-port=$CARLA_PORT -benchmark -fps=10 -quality-level=Low"
+CARLA_SERVER_COMMAND="$CARLA_ROOT/CarlaUE4.sh -RenderOffScreen -carla-port=$CARLA_PORT -benchmark -fps=20 -quality-level=Low"
 TRAINING_SCRIPT="-m torch_wm.rl.train"
 
 # Updated for Twister/PyTorch

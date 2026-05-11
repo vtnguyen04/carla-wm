@@ -30,8 +30,8 @@ defaults:
   steps: 1e8
   eval_every: 1e4
   eval_episodes: 1
-  log_every: 500
-  save_every: 600
+  log_every: 100
+  save_every: 400
   train_ratio: 512
   train_fill: 0
   replay_min: 500
@@ -237,10 +237,10 @@ defaults:
     observation:
       camera:
         decode: True
-        pretrained: { enabled: true, backbone: "resnet18", freeze: true }
-        attributes: { image_size_x: 64, image_size_y: 64 }
+        pretrained: { enabled: true, backbone: "resnet18", freeze: false }
+        attributes: { image_size_x: 128, image_size_y: 128 }
       birdeye_wpt: { tssm: false, decode: false, signal: false }
     world:
       carla_port: 2000
       town: Town01
-      fixed_delta_seconds: 0.1
+      fixed_delta_seconds: 0.05

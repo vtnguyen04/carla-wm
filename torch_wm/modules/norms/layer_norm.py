@@ -63,7 +63,7 @@ class LayerNorm(nn.LayerNorm):
 
         # LayerNorm
         if self.convert_float32 and input.dtype != torch.float32:
-            with torch.cuda.amp.autocast(enabled=False):
+            with torch.amp.autocast('cuda', enabled=False):
                 output = self.permute_output(super(LayerNorm, self).forward(self.permute_input(input.type(torch.float32)))).type(input.dtype)
         else:
             output = self.permute_output(super(LayerNorm, self).forward(self.permute_input(input)))

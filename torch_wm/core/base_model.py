@@ -323,7 +323,7 @@ class Model(TrainingLoopMixin, modules.Module):
         if "cuda" in str(self.device):
             # Precision Mapping (Symmetric Fix)
             prec_dtype = torch.float16 if precision == "float16" else torch.float32
-            with torch.cuda.amp.autocast(enabled=precision!=torch.float32, dtype=prec_dtype):
+            with torch.amp.autocast('cuda', enabled=precision!=torch.float32, dtype=prec_dtype):
                 batch_losses, batch_metrics, batch_truths, batch_preds = self.forward_model(inputs, targets, compute_metrics=eval_training)
         else:
             batch_losses, batch_metrics, batch_truths, batch_preds = self.forward_model(inputs, targets, compute_metrics=eval_training)
