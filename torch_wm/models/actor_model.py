@@ -26,7 +26,7 @@ from torch_wm.core.base_model import Model as BaseModel
 
 class ActorModel(BaseModel):
     """Imagines future trajectories and optimizes the policy network.
-    
+
     Args:
         outer: Reference to the parent WMAgent model for shared networks.
     """
@@ -41,51 +41,55 @@ class ActorModel(BaseModel):
         img_states = self.outer.dynamics_model.imagine(self.outer.policy_network, self.outer.detached_posts, self.outer.config.H, self.outer.detached_is_firsts, self.outer.detached_is_firsts_hidden)
         feats = self.outer.dynamics_model.get_feat(img_states)
 
-        # Predict rewards (B', 1+H, 1)
-        model_rewards = self.outer.reward_network(feats)
+        # 1. Predict rewards, values and discounts from World Model heads
+        # We use .mean() (expectation) instead of .mode() to provide a continuous gradient
+        # signal, which prevents the "zero-reward" problem in early training.
+        model_rewards_dist = self.outer.reward_network(feats)
+        model_rewards_mean = model_rewards_dist.mean()
 
-        # Predict Values (B', 1+H, 1)
         if self.outer.config.target_value_reg:
-            values = self.outer.value_network(feats)
+            values_dist = self.outer.value_network(feats)
         else:
-            values = self.outer.v_target(feats)
+            values_dist = self.outer.v_target(feats)
+        values_mean = values_dist.mean()
 
-        # Predict Discounts (B', 1+H, 1)
         discounts_dist = self.outer.continue_network(feats)
-        discounts = discounts_dist.mode() if callable(discounts_dist.mode) else discounts_dist.mode
+        discounts_mean = discounts_dist.mean()
 
-        # Override discount prediction for the first step with the true
-        # discount factor from the replay buffer.
-        d_flat = d.reshape(-1).float()  # (B*L,) and cast to float for arithmetic
-        true_first = (1.0 - d_flat).unsqueeze(dim=-1).unsqueeze(dim=-1)  # (B*L, 1, 1)
-        discounts = torch.cat([true_first, discounts[:, 1:]], dim=1)
+        # 2. Prepare discounts (B', 1+H, 1)
+        # We override the first step with ground truth continuation from the buffer.
+        # d is terminal flag (1=dead, 0=alive), so (1.0 - d) is continuation.
+        d_flat = d.reshape(-1).float()
+        true_first = (1.0 - d_flat).unsqueeze(-1).unsqueeze(-1).detach() # (B', 1, 1)
 
-        # Compute lambda returns (B', H, 1)
-        model_rewards_mode = model_rewards.mode() if callable(model_rewards.mode) else model_rewards.mode
-        values_mode = values.mode() if callable(values.mode) else values.mode
-        returns = self.outer.compute_td_lambda(rewards=model_rewards_mode[:, 1:], values=values_mode[:, 1:], discounts=self.outer.config.gamma * discounts[:, 1:])
+        # Combine true continuation at t=0 with predicted discounts for t=1..H
+        full_discounts = torch.cat([true_first, discounts_mean[:, 1:]], dim=1)
 
-        # Update Perc
+        # 3. Compute lambda returns (B', H, 1)
+        # Note: We use full_discounts[:, 1:] which corresponds to steps 1..H
+        returns = self.outer.compute_td_lambda(
+            rewards=model_rewards_mean[:, 1:],
+            values=values_mean[:, 1:],
+            discounts=self.outer.config.gamma * full_discounts[:, 1:]
+        )
+
+        # 4. Compute Advantage and Normalize
         offset, invscale = self.outer.update_perc(returns)
+        normed_returns = (returns - offset) / invscale
+        normed_base = (values_mean[:, :-1] - offset) / invscale
+        advantage = (normed_returns - normed_base).detach().squeeze(-1) # (B', H)
 
-        # Norm Returns using quantiles ema ~ [0:1]
-        normed_returns = (returns - offset) / invscale  # 1:H+1
-        normed_base = (values_mode[:, :-1] - offset) / invscale  # 0:H
-
-        # advantage (B', H)
-        advantage = (normed_returns - normed_base).squeeze(dim=-1)
-
-        # Policy Dist (B', 1+H, A)
+        # 5. Policy Optimization
         policy_dist = self.outer.policy_network(feats.detach())
-
-        # Actor Loss (REINFORCE with Entropy Regularization)
         policy_log_prob = policy_dist.log_prob(img_states["action"].detach())[:, :-1]
-        reinforce_loss = - (policy_log_prob * advantage.detach()).mean()
-        
-        # Encourage exploration
-        actor_entropy_scale = self.outer.config.get("actor_entropy", 3e-4)
+
+        reinforce_loss = - (policy_log_prob * advantage * true_first.squeeze(-1)).mean()
+
+        # 6. Entropy Regularization
+        # In twister.yaml, entropy is nested under 'actor'
+        actor_entropy_scale = self.outer.config.actor.entropy
         entropy_bonus = policy_dist.entropy()[:, :-1].mean()
-        
+
         actor_loss = reinforce_loss - (actor_entropy_scale * entropy_bonus)
 
         self.add_loss("actor", actor_loss)

@@ -57,8 +57,7 @@ class WorldModelAgent(embodied.Agent):
             self.expl = Disag(wm_config).to(self.device)
 
         # Pass action configuration for dynamic decoding in report()
-        # They are usually in config.env_params.action or similar nested path
-        action_cfg = config.get("env_params", {}).get("action", {})
+        action_cfg = config.get("env_params", {}).get("action", config.get("action", {}))
         self.model.config.discrete_acc = action_cfg.get("discrete_acc", [-3.0, 0.0, 3.0])
         self.model.config.discrete_steer = action_cfg.get("discrete_steer", [-0.6, 0.0, 0.6])
 
@@ -79,7 +78,7 @@ class WorldModelAgent(embodied.Agent):
             "dynamics_type": "rssm",
             "stoch_size": 32, "discrete": 32, "hidden_size": 256, 
             "num_blocks_trans": 1, "att_context_left": 32,
-            "precision": "float32", "model_lr": 1e-4, "actor_lr": 8e-5, "critic_lr": 8e-5,
+            "precision": "float32", "model_lr": 1e-4, "actor_lr": 1e-4, "critic_lr": 1e-4,
             "grad_clip": 100.0, "gamma": 0.997, "lambda_td": 0.95,
             "H": 10, "actor_entropy": 1e-3,
             "contrastive_steps": 1, "uniform_mix": 0.01,
@@ -96,37 +95,40 @@ class WorldModelAgent(embodied.Agent):
             "warmup_steps": 1000, "total_steps": 1000000, "min_lr_ratio": 0.1,
             "dim_cnn": 32,
             "encoder_dim_layers": [32, 64, 128, 256],
-            "decoder_dim_layers": [256, 128, 64, 32, 3]
+            "decoder_dim_layers": [256, 128, 64, 32, 3],
+            "discrete_acc": [-3.0, 0.0, 3.0],
+            "discrete_steer": [-0.6, 0.0, 0.6]
         }
         
         c.update(defaults)
         
         # Inject all keys that exist in yaml config into model configs dynamically
-        # Expanded to include common keys not in defaults
         keys_to_check = set(list(defaults.keys()) + ["dynamics_type", "discrete_steer", "discrete_acc"])
         for k in keys_to_check:
             if k in config: c[k] = config[k]
         
+        # Check env_params for nested action config if not at top level
+        env_action = config.get("env_params", {}).get("action", {})
+        if "discrete_acc" in env_action: c.discrete_acc = env_action["discrete_acc"]
+        if "discrete_steer" in env_action: c.discrete_steer = env_action["discrete_steer"]
+
         # Explicitly copy 'modules' to preserve loss manager settings
         if "modules" in config:
             c.modules = config["modules"]
         
-        # Calculate num_actions correctly
+        # Calculate num_actions correctly based on configured lists
+        n_acc = len(c.discrete_acc)
+        n_steer = len(c.discrete_steer)
+        c.num_actions = n_acc * n_steer
+        c.discrete_actions = True
+        
+        # Fallback to observation space if needed
         if "action" in self.act_space:
             space = self.act_space["action"]
-            if hasattr(space, "n"): 
+            if hasattr(space, "n") and space.n > 0: 
                 c.num_actions = space.n
-                c.discrete_actions = True
-            elif hasattr(space, "shape") and len(space.shape) > 0:
-                # Use LAST dim as action size (shape may include batch/seq dims from replay)
+            elif hasattr(space, "shape") and len(space.shape) > 0 and space.shape[-1] > 0:
                 c.num_actions = space.shape[-1]
-                c.discrete_actions = True  # One-hot action from CARLA discrete env
-            else:
-                c.num_actions = 63
-                c.discrete_actions = True
-        else:
-            c.num_actions = 63
-            c.discrete_actions = True
         
         c.env_params = AttrDict()
         env_cfg = config.get("env", {})

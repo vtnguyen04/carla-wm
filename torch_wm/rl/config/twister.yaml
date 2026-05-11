@@ -52,13 +52,13 @@ defaults:
     critic_type: vfunction
     imag_horizon: 15
     imag_unroll: False
-    horizon: 333
-    return_lambda: 0.95
+    entropy: 1e-3
+    discount_lambda: 0.95
     critic_slowreg: logprob
     slow_critic_update: 1
     slow_critic_fraction: 0.02
     retnorm: { impl: perc_ema, decay: 0.99, max: 1.0, perclo: 5.0, perchi: 95.0 }
-    actent: 3e-4
+    actent: 1e-3
     imag_smoothness_scale: 1e-4
     sync_every: 10
     log_zeros: False
@@ -84,19 +84,19 @@ defaults:
   actor_opt:
     {
       opt: adam,
-      lr: 4e-5,
+      lr: 1e-4,
       eps: 1e-5,
       clip: 100.0,
       wd: 0.0,
       warmup: 0,
       decay_steps: 5e7,
-      min_lr: 1e-6,
+      min_lr: 1e-5,
       lateclip: 0.0,
     }
   critic_opt:
     {
       opt: adam,
-      lr: 4e-5,
+      lr: 1e-4,
       eps: 1e-5,
       clip: 100.0,
       wd: 0.0,
@@ -109,7 +109,7 @@ defaults:
   # Agent Architecture Details
   reward_head:
     {
-      layers: 5,
+      layers: 3,
       units: 1024,
       act: silu,
       norm: layer,
@@ -123,7 +123,7 @@ defaults:
     }
   cont_head:
     {
-      layers: 5,
+      layers: 3,
       units: 1024,
       act: silu,
       norm: layer,
@@ -137,7 +137,7 @@ defaults:
 
   actor:
     {
-      layers: 5,
+      layers: 3,
       units: 1024,
       act: silu,
       norm: layer,
@@ -147,13 +147,14 @@ defaults:
       outnorm: False,
       unimix: 0.01,
       inputs: [deter, stoch],
+      entropy: 1e-3,
       winit: normal,
       fan: avg,
       symlog_inputs: False,
     }
   critic:
     {
-      layers: 5,
+      layers: 3,
       units: 1024,
       act: silu,
       norm: layer,
@@ -186,7 +187,7 @@ defaults:
     losses:
       kl: { enabled: true, weight: 1.0, free_nats: 1.0, prior_scale: 0.5, post_scale: 0.1 }
       reconstruction: { enabled: true, weight: 1.5 }
-      joint_embedding: { enabled: true, weight: 10.0 }
+      joint_embedding: { enabled: true, weight: 5.0 }
       reward: { enabled: true, weight: 1.0 }
       discount: { enabled: true, weight: 1.0 }
       sigreg: { enabled: true, weight: 0.1 }
@@ -200,7 +201,6 @@ defaults:
   H: 15
   gamma: 0.999
   lambda_td: 0.95
-  actor_entropy: 3e-4
 
   # Wrapper Config
   wrapper:
