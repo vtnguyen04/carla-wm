@@ -22,6 +22,9 @@ Extracted from twister.py inner class for SOLID compliance.
 
 import torch
 from torch_wm.core.base_model import Model as BaseModel
+from carla_env.toolkit.utils import get_logger
+
+log = get_logger(log_dir=".", job_name="actor_model")
 
 
 class ActorModel(BaseModel):
@@ -65,20 +68,22 @@ class ActorModel(BaseModel):
         discounts_mean = discounts_dist.mean() if callable(discounts_dist.mean) else discounts_dist.mean
 
         # 2. Prepare discounts (B', 1+H, 1)
-        # We override the first step with ground truth continuation from the buffer.
-        # d is terminal flag (1=dead, 0=alive), so (1.0 - d) is continuation.
+        # d is already the CONTINUATION flag from agent.py: d = 1.0 - is_terminal
+        # d=1 means alive, d=0 means dead/terminal.
         d_flat = d.reshape(-1).float()
-        true_first = (1.0 - d_flat).unsqueeze(-1).unsqueeze(-1).detach() # (B', 1, 1)
+        continuation = d_flat.unsqueeze(-1).unsqueeze(-1).detach() # (B', 1, 1)
 
         # Combine true continuation at t=0 with predicted discounts for t=1..H
-        full_discounts = torch.cat([true_first, discounts_mean[:, 1:]], dim=1)
+        full_discounts = torch.cat([continuation, discounts_mean[:, 1:]], dim=1)
 
         # 3. Compute lambda returns (B', H, 1)
-        # Note: We use full_discounts[:, 1:] which corresponds to steps 1..H
+        # DreamerV3 parity: use horizon-derived discount, NOT gamma
+        H = self.outer.config.get("H", 15)
+        discount = 1.0 - 1.0 / H
         returns = self.outer.compute_td_lambda(
             rewards=model_rewards_mean[:, 1:],
             values=values_mean[:, 1:],
-            discounts=self.outer.config.gamma * full_discounts[:, 1:]
+            discounts=discount * full_discounts[:, 1:]
         )
 
         # 4. Compute Advantage and Normalize
@@ -91,27 +96,60 @@ class ActorModel(BaseModel):
         policy_dist = self.outer.policy_network(feats.detach())
         policy_log_prob = policy_dist.log_prob(img_states["action"].detach())[:, :-1]
 
-        reinforce_loss = - (policy_log_prob * advantage * true_first.squeeze(-1)).mean()
+        # Compute trajectory weights (B', H)
+        # DreamerV3 parity: weight = cumprod(discount * cont, dim=time) / discount
+        weights = torch.cumprod(discount * full_discounts, dim=1) / discount
+        weights = weights[:, :-1].squeeze(-1).detach()
+
+        # Store weights for CriticModel (critic needs trajectory weighting too)
+        self.outer.detached_weights = weights
+
+        reinforce_loss = - (weights * policy_log_prob * advantage).mean()
 
         # 6. Entropy Regularization
         entropy = policy_dist.entropy()[:, :-1]
         
-        # Defensive configuration access for entropy parameters
-        # Support both nested (config.actor.entropy) and flat (config.actor_entropy) structures
-        # Also handles cases where 'run' might be missing
-        entropy_scale = getattr(self.outer.config, "actor", {}).get("entropy")
+        # DreamerV3 parity: use 'actent' key (JAX uses config.actent = 1e-2)
+        entropy_scale = self.outer.config.get("run", {}).get("actent")
         if entropy_scale is None:
-            entropy_scale = getattr(self.outer.config, "run", {}).get("actor_entropy")
-        if entropy_scale is None:
-            entropy_scale = getattr(self.outer.config, "actor_entropy", 1e-3)
-            
-        entropy_loss = - entropy_scale * (entropy * true_first.squeeze(-1)).mean()
+            entropy_scale = self.outer.config.get("actent", 1e-2)
+        entropy_scale = float(entropy_scale)
         
-        actor_loss = reinforce_loss + entropy_loss
+        # One-time debug to verify config
+        if not hasattr(self, '_ent_debug_done'):
+            self._ent_debug_done = True
+            log.info(f"[ACTOR DEBUG] actent={entropy_scale}, raw_entropy_mean={entropy.mean().item():.6f}, max_entropy={3.784:.3f}")
+        
+        # Periodic actor signal debug (every 50 train steps)
+        if not hasattr(self, '_act_log_count'):
+            self._act_log_count = 0
+        self._act_log_count += 1
+        if self._act_log_count % 50 == 0:
+            with torch.no_grad():
+                raw_ret_mean = returns.mean().item()
+                raw_ret_std = returns.std().item()
+                raw_val_mean = values_mean[:, :-1].mean().item()
+                raw_val_std = values_mean[:, :-1].std().item()
+                raw_rew_mean = model_rewards_mean[:, 1:].mean().item()
+            log.info(f"[ACTOR SIGNAL] step={self._act_log_count} | adv_mean={advantage.mean().item():.4f} adv_std={advantage.std().item():.4f} | entropy={entropy.mean().item():.3f} | reinforce={reinforce_loss.item():.4f}")
+            log.info(f"  -> returns: mean={raw_ret_mean:.3f} std={raw_ret_std:.3f} | values: mean={raw_val_mean:.3f} std={raw_val_std:.3f} | rew_mean={raw_rew_mean:.3f}")
+            
+        entropy_loss = - entropy_scale * (weights * entropy).mean()
+
+        # 7. Action Smoothness Penalty (DreamerV3 parity)
+        # Penalizes jerky actions in imagination to encourage smooth trajectories
+        smoothness_scale = self.outer.config.get("run", {}).get("imag_smoothness_scale", 1e-4)
+        actions = img_states["action"].detach()
+        action_diffs = actions[:, 1:] - actions[:, :-1]
+        smoothness_penalty = (weights * action_diffs.pow(2).mean(-1)).mean()
+        smoothness_loss = smoothness_scale * smoothness_penalty
+        
+        actor_loss = reinforce_loss + entropy_loss + smoothness_loss
         
         self.add_loss("actor", actor_loss)
         self.add_loss("actor_reinforce", reinforce_loss)
         self.add_loss("actor_entropy", entropy_loss)
+        self.add_loss("actor_smoothness", smoothness_loss)
         
         self.outer.detached_feats = feats.detach()
         self.outer.detached_returns = returns.detach()

@@ -107,6 +107,29 @@ class WorldModelAgent(embodied.Agent):
         for k in keys_to_check:
             if k in config: c[k] = config[k]
         
+        # Forward keys from config.run (embodied.Config nests under 'run.')
+        run_keys = ["actent", "imag_smoothness_scale", "actor_entropy", "discount_lambda"]
+        try:
+            run_cfg = config.run
+            for k in run_keys:
+                if k in run_cfg:
+                    c[k] = float(run_cfg[k])
+        except (KeyError, AttributeError):
+            pass
+        
+        # Forward optimizer configs (nested dicts under defaults)
+        for opt_key in ["model_opt", "actor_opt", "critic_opt"]:
+            if opt_key in config:
+                raw = config[opt_key]
+                # Convert to plain dict with float-casted numeric values
+                opt_dict = {}
+                for k, v in (raw.items() if hasattr(raw, 'items') else dict(raw).items()):
+                    try:
+                        opt_dict[k] = float(v) if k not in ("opt",) else v
+                    except (ValueError, TypeError):
+                        opt_dict[k] = v
+                c[opt_key] = opt_dict
+        
         # Check env_params for nested action config if not at top level
         env_action = config.get("env_params", {}).get("action", {})
         if "discrete_acc" in env_action: c.discrete_acc = env_action["discrete_acc"]
@@ -325,10 +348,10 @@ class WorldModelAgent(embodied.Agent):
         add_grouped_metrics(act_loss_dict, "actor")
         add_grouped_metrics(crit_loss_dict, "critic")
         
-        # Add flat keys for test compatibility
-        metrics['wm_loss'] = wm_loss_dict.get('loss', torch.tensor(0.0)).item()
-        metrics['actor_loss'] = act_loss_dict.get('loss', torch.tensor(0.0)).item()
-        metrics['critic_loss'] = crit_loss_dict.get('loss', torch.tensor(0.0)).item()
+        # Flat keys for test compatibility (use grouped keys as canonical)
+        metrics['wm_loss'] = metrics.get('wm/loss', torch.tensor(0.0))
+        if isinstance(metrics['wm_loss'], torch.Tensor):
+            metrics['wm_loss'] = metrics['wm_loss'].item() if metrics['wm_loss'].dim() == 0 else metrics['wm_loss'].mean().item()
         
         # Add auxiliary metrics (grad norms, model-specific stats)
         for src in [wm_metrics, act_metrics, crit_metrics]:

@@ -89,8 +89,8 @@ def test_agent_train(agent_config, spaces):
     
     outputs, state, metrics = agent.train(data)
     assert 'wm_loss' in metrics
-    assert 'actor_loss' in metrics
-    assert 'critic_loss' in metrics
+    assert 'actor/loss' in metrics
+    assert 'critic/loss' in metrics
     assert metrics['wm_loss'] > 0
 
 def test_agent_save_load(agent_config, spaces):

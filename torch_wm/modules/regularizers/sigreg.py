@@ -65,7 +65,6 @@ class SIGRegLoss(BaseLoss):
         
         loss = statistic.mean() * self.weight
         
-        self._metrics["loss_sigreg"] = loss.item()
         return loss
 
     def name(self) -> str:

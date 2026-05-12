@@ -138,14 +138,6 @@ class CarlaBaseEnv(gym.Env):
         for attempt in range(max_retries):
             try:
                 if ego_vehicle is not None and ego_vehicle.is_alive:
-                    # Configure vehicle physics for better stability
-                    physics_control = self.get_ego_vehicle().get_physics_control()
-                    # Increase mass slightly for stability
-                    physics_control.mass = 1500.0
-                    # Adjust wheels for better grip
-                    for wheel in physics_control.wheels:
-                        wheel.tire_friction = 3.5
-                    self.get_ego_vehicle().apply_physics_control(physics_control)
                     # Test ego vehicle validity
                     _ = ego_vehicle.get_location()
                     break
@@ -228,22 +220,21 @@ class CarlaBaseEnv(gym.Env):
             acc = action[0]
             steer = action[1]
 
-        # ============================================================
-        # STEERING SMOOTHING - Prevent jerky steering
-        # ============================================================
-        target_steer = steer
-        alpha_steer = 0.3  # Match baseline DreamerV3 smoothing factor
-        steer = self.prev_steer * (1 - alpha_steer) + target_steer * alpha_steer
 
-        # Limit steering change rate (slew rate) to stabilize physics
-        max_steer_delta = 0.1 
-        steer_delta = steer - self.prev_steer
-        if steer_delta > max_steer_delta:
-            steer = self.prev_steer + max_steer_delta
-        elif steer_delta < -max_steer_delta:
-            steer = self.prev_steer - max_steer_delta
-        
-        self.prev_steer = steer
+        if hasattr(self._config, 'eval') and self._config.eval:
+            target_steer = steer
+            alpha_steer = 0.3
+            steer = self.prev_steer * (1 - alpha_steer) + target_steer * alpha_steer
+
+            # Limit steering change rate (slew rate)
+            max_steer_delta = 0.1
+            steer_delta = steer - self.prev_steer
+            if steer_delta > max_steer_delta:
+                steer = self.prev_steer + max_steer_delta
+            elif steer_delta < -max_steer_delta:
+                steer = self.prev_steer - max_steer_delta
+
+            self.prev_steer = steer
 
         # Convert acceleration to throttle and brake
         if acc > 0:
@@ -252,6 +243,19 @@ class CarlaBaseEnv(gym.Env):
         else:
             throttle = 0
             brake = np.clip(-acc / 3.0, 0, 1)
+
+        # DEBUG: Log action details every 20 steps + cumulative steer stats
+        if hasattr(self, '_time_step') and self._time_step % 20 == 0:
+            v = self.get_ego_vehicle().get_velocity()
+            speed = 3.6 * np.sqrt(v.x**2 + v.y**2 + v.z**2)
+            # Track steer distribution
+            if not hasattr(self, '_steer_hist'):
+                self._steer_hist = []
+                self._reward_sum = 0.0
+            self._steer_hist.append(steer)
+            steer_arr = np.array(self._steer_hist[-50:])  # last 50 samples
+            steer_info = f"steer_mean={steer_arr.mean():.2f} steer_std={steer_arr.std():.2f}"
+            log.info(f"[ACTION] step={self._time_step} | raw_action={action} | acc={acc} | steer={steer:.2f} | throttle={throttle:.3f} | brake={brake:.3f} | speed={speed:.1f}km/h | {steer_info}")
 
         return carla.VehicleControl(
             throttle=float(throttle),
@@ -293,6 +297,17 @@ class CarlaBaseEnv(gym.Env):
         env_state = self.get_state()
         env_state["step_count"] = self._time_step
         reward, reward_info = self.reward()
+
+        # DEBUG: Log reward breakdown every 100 steps
+        if self._time_step % 100 == 0:
+            r_wpt = reward_info.get('r_waypoints', 0)
+            r_spd = reward_info.get('r_speed', 0)
+            r_col = reward_info.get('r_collision', 0)
+            r_ool = reward_info.get('r_out_of_lane', 0)
+            r_ctr = reward_info.get('r_centerline', 0)
+            r_hdg = reward_info.get('r_heading', 0)
+            spd_n = reward_info.get('speed_norm', 0)
+            log.info(f"[REWARD] step={self._time_step} | total={reward:.2f} | wpt={r_wpt:.2f} spd={r_spd:.2f} col={r_col:.1f} ool={r_ool:.2f} ctr={r_ctr:.2f} hdg={r_hdg:.2f} | speed_norm={spd_n:.1f}")
 
         # Always get fresh observation to prevent flickering
         self.obs, obs_info = self._observer.get_observation(env_state)

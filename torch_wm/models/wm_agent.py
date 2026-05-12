@@ -38,6 +38,9 @@ import itertools
 import numpy as np
 import matplotlib.pyplot as plt
 import io
+from carla_env.toolkit.utils import get_logger
+
+log = get_logger(log_dir=".", job_name="wm_agent")
 
 class WMAgent(BaseModel):
     """
@@ -394,7 +397,7 @@ class WMAgent(BaseModel):
                 report["Latent_Analysis/Trajectory_Scatter"] = plot_img[:, :, :3]
                 plt.close(fig)
             except Exception as e:
-                print(f"[Warning] Failed to generate latent scatter plot: {e}")
+                log.warning(f"Failed to generate latent scatter plot: {e}")
 
             # 6. Attention Analysis
             if "att_w" in posts and len(posts["att_w"]) > 0:
@@ -507,6 +510,7 @@ class WMAgent(BaseModel):
         self.world_model.compile(optimizer=Adam(model_params, lr=wm_lr, eps=m_opt["eps"], weight_decay=m_opt["wd"], grad_max_norm=m_opt["clip"]), losses=None)
         self.actor_model.compile(optimizer=Adam(list(self.policy_network.parameters()), lr=actor_lr, eps=a_opt["eps"], weight_decay=a_opt["wd"], grad_max_norm=a_opt["clip"]), losses=None)
         self.critic_model.compile(optimizer=Adam(list(self.value_network.parameters()), lr=critic_lr, eps=c_opt["eps"], weight_decay=c_opt["wd"], grad_max_norm=c_opt["clip"]), losses=None)
+        log.info(f"[OPT] WM lr={m_opt['lr']}, Actor lr={a_opt['lr']}, Critic lr={c_opt['lr']} | Actor eps={a_opt['eps']}")
         
         self.model_step = self.world_model.optimizer.param_groups[0]["lr_scheduler"].model_step
         self.optimizer = {"wm": self.world_model.optimizer, "actor": self.actor_model.optimizer, "critic": self.critic_model.optimizer}

@@ -9,6 +9,9 @@ from .carla_base_env import CarlaBaseEnv
 from .toolkit import (BasePlanner, TTCCalculator, get_location_distance,
                       get_vehicle_pos, get_vehicle_rotation,
                       get_vehicle_velocity)
+from .toolkit.utils import get_logger
+
+log = get_logger(log_dir=".", job_name="carla_wpt_env")
 
 
 class CarlaWptEnv(CarlaBaseEnv):
@@ -171,6 +174,10 @@ class CarlaWptEnv(CarlaBaseEnv):
         ╚══════════════════════════════════════════════════════════════╝
         """
         reward_scales = self._config.reward.scales
+        # One-time debug: verify actual reward scale values
+        if not hasattr(self, '_reward_scales_logged'):
+            self._reward_scales_logged = True
+            log.info(f"[REWARD SCALES] speed={reward_scales.get('speed', '?')} waypoint={reward_scales.get('waypoint', '?')} collision={reward_scales.get('collision', '?')} time={reward_scales.get('time', '?')}")
         ego = self.get_ego_vehicle()
 
         # Use delayed pose for reward calculation if enabled

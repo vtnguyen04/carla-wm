@@ -85,9 +85,7 @@ class ReconstructionLoss(BaseLoss):
             total_loss = -reconstructions.log_prob(targets.detach()).mean()
             num_keys = 1
                     
-        if num_keys > 0:
-            total_loss = total_loss / num_keys
-        else:
+        if num_keys == 0:
             # If we expected reconstructions but found no matching targets, log a warning
             logger.warning(f"Reconstruction loss: matched 0/{{len(reconstructions)}} keys in targets. Targets keys: {{list(targets.keys()) if isinstance(targets, dict) else 'not a dict'}}")
             if isinstance(reconstructions, dict) and len(reconstructions) > 0:

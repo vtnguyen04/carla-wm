@@ -24,13 +24,13 @@ defaults:
   uniform_mix: 0.01
 
   # Replay Buffer
-  replay_size: 1e6
+  replay_size: 1000000
 
   # Run Control
-  steps: 1e8
-  eval_every: 1e4
+  steps: 100000000
+  eval_every: 10000
   eval_episodes: 1
-  log_every: 100
+  log_every: 10
   save_every: 400
   train_ratio: 512
   train_fill: 1000
@@ -41,29 +41,29 @@ defaults:
 
   run:
     script: train
-    expl_until: 0
+    expl_until: 10000
     eval_initial: True
     eval_samples: 1
     eval_fill: 0
     actor_dist_disc: onehot
-    actor_entropy: 1e-2
+    actor_entropy: 0.3
     actor_dist_cont: normal
     actor_grad_disc: reinforce
     actor_grad_cont: backprop
     critic_type: vfunction
     imag_horizon: 15
     imag_unroll: False
-    entropy: 1e-2
+    entropy: 0.01
     discount_lambda: 0.95
     critic_slowreg: logprob
     slow_critic_update: 1
     slow_critic_fraction: 0.02
     retnorm: { impl: perc_ema, decay: 0.99, max: 1.0, perclo: 5.0, perchi: 95.0 }
-    actent: 1e-2
-    imag_smoothness_scale: 1e-4
+    actent: 1.0
+    imag_smoothness_scale: 0.0001
     sync_every: 10
     log_zeros: False
-    log_keys_video: [none]
+    log_keys_video: ["camera"]
     log_keys_sum: "^$"
     log_keys_mean: "(log_entropy)"
     log_keys_max: "^$"
@@ -73,44 +73,44 @@ defaults:
   model_opt:
     {
       opt: adam,
-      lr: 3e-4,
-      eps: 1e-8,
+      lr: 0.0003,
+      eps: 0.00000001,
       clip: 1000.0,
       wd: 0.0,
       warmup: 0,
-      decay_steps: 5e7,
-      min_lr: 4e-5,
+      decay_steps: 50000000,
+      min_lr: 0.00004,
       lateclip: 0.0,
     }
   actor_opt:
     {
       opt: adam,
-      lr: 1e-4,
-      eps: 1e-5,
+      lr: 0.0001,
+      eps: 0.00001,
       clip: 100.0,
       wd: 0.0,
       warmup: 0,
-      decay_steps: 5e7,
-      min_lr: 1e-5,
+      decay_steps: 50000000,
+      min_lr: 0.00001,
       lateclip: 0.0,
     }
   critic_opt:
     {
       opt: adam,
-      lr: 1e-4,
-      eps: 1e-5,
+      lr: 0.0001,
+      eps: 0.00001,
       clip: 100.0,
       wd: 0.0,
       warmup: 0,
-      decay_steps: 5e7,
-      min_lr: 1e-5,
+      decay_steps: 50000000,
+      min_lr: 0.00001,
       lateclip: 0.0,
     }
 
   # Agent Architecture Details
   reward_head:
     {
-      layers: 3,
+      layers: 5,
       units: 1024,
       act: silu,
       norm: layer,
@@ -124,7 +124,7 @@ defaults:
     }
   cont_head:
     {
-      layers: 3,
+      layers: 5,
       units: 1024,
       act: silu,
       norm: layer,
@@ -138,7 +138,7 @@ defaults:
 
   actor:
     {
-      layers: 3,
+      layers: 5,
       units: 1024,
       act: silu,
       norm: layer,
@@ -148,14 +148,14 @@ defaults:
       outnorm: False,
       unimix: 0.01,
       inputs: [deter, stoch],
-      entropy: 1e-2,
+      entropy: 0.3,
       winit: normal,
       fan: avg,
       symlog_inputs: False,
     }
   critic:
     {
-      layers: 3,
+      layers: 5,
       units: 1024,
       act: silu,
       norm: layer,
@@ -187,20 +187,20 @@ defaults:
   modules:
     losses:
       kl: { enabled: true, weight: 1.0, free_nats: 1.0, prior_scale: 0.5, post_scale: 0.1 }
-      reconstruction: { enabled: true, weight: 1.5 }
+      reconstruction: { enabled: true, weight: 1.0 }
       joint_embedding: { enabled: true, weight: 5.0 }
-      reward: { enabled: true, weight: 1.0 }
-      discount: { enabled: true, weight: 1.0 }
+      reward: { enabled: true, weight: 5.0 }
+      discount: { enabled: true, weight: 5.0 }
       sigreg: { enabled: true, weight: 0.1 }
 
   # Agent Params
   task_behavior: Greedy
   expl_behavior: None
-  batch_size: 32
+  batch_size: 16
   batch_length: 64
   data_loaders: 20
   H: 15
-  gamma: 0.999
+  gamma: 0.99
   lambda_td: 0.95
 
   # Wrapper Config
@@ -209,7 +209,7 @@ defaults:
     reset: True
     discretize: 0
     checks: False
-    repeat: 1
+    repeat: 4
 
   # CARLA Env Params
   env_params:
@@ -224,16 +224,16 @@ defaults:
         traffic_light_violate: 30.0
         stop_sign: 10.0
         speeding: 5.0
-        speed: 1.0
-        waypoint: 2.0
+        speed: 15.0
+        waypoint: 10.0
         out_of_lane: 5.0
         centerline: 1.0
         heading: 0.5
-        destination_reached: 50.0
-        time: 0.1
+        destination_reached: 200.0
+        time: -2.0
 
     action:
-      discrete_acc: [-3.0, -1.0, 0.0, 1.0, 3.0]
+      discrete_acc: [-1.5, 0.5, 1.5, 3.0]
       discrete_steer: [-1.0, -0.8, -0.6, -0.4, -0.2, 0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
     observation:
       camera:
