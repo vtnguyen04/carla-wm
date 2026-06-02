@@ -5,35 +5,40 @@ defaults:
   num_envs: 1
   device: cuda
   precision: 16-mixed
+  gradient_checkpointing: True
 
   dynamics_type: "tssm"
-  stoch_size: 16
-  discrete: 16
-  hidden_size: 1024
-  num_blocks_trans: 1
-  att_context_left: 32
+  policy_type: "default_policy"
+  actor_model_type: "default_actor"
+  num_actions: 21
+  diffusion_steps: 10
+  stoch_size: 32
+  discrete: 32
+  hidden_size: 768
+  num_blocks_trans: 3
+  att_context_left: 24
 
   # Neural Network Capacity
   dim_cnn: 32
   encoder_dim_layers: [32, 64, 128, 256]
   decoder_dim_layers: [256, 128, 64, 32, 3]
 
-  # Temporal Contrastive Settings
   contrastive_steps: 1
-  contrastive_offsets: [3]
+  contrastive_offsets: [15]
   uniform_mix: 0.01
 
   # Replay Buffer
-  replay_size: 1000000
+  replay_size: 100000
 
   # Run Control
-  steps: 100000000
-  eval_every: 10000
+
+  steps: 200000
+  eval_every: 200
   eval_episodes: 1
   log_every: 10
   save_every: 400
   train_ratio: 512
-  train_fill: 1000
+  train_fill: 500
   replay_min: 500
   tensorboard: False
   wandb: True
@@ -41,12 +46,12 @@ defaults:
 
   run:
     script: train
-    expl_until: 10000
+    expl_until: 5000
     eval_initial: True
     eval_samples: 1
     eval_fill: 0
     actor_dist_disc: onehot
-    actor_entropy: 0.3
+    actor_entropy: 0.003
     actor_dist_cont: normal
     actor_grad_disc: reinforce
     actor_grad_cont: backprop
@@ -59,7 +64,7 @@ defaults:
     slow_critic_update: 1
     slow_critic_fraction: 0.02
     retnorm: { impl: perc_ema, decay: 0.99, max: 1.0, perclo: 5.0, perchi: 95.0 }
-    actent: 1.0
+    actent: 0.0003
     imag_smoothness_scale: 0.0001
     sync_every: 10
     log_zeros: False
@@ -73,7 +78,7 @@ defaults:
   model_opt:
     {
       opt: adam,
-      lr: 0.0003,
+      lr: 0.0001,
       eps: 0.00000001,
       clip: 1000.0,
       wd: 0.0,
@@ -85,7 +90,7 @@ defaults:
   actor_opt:
     {
       opt: adam,
-      lr: 0.0001,
+      lr: 0.00003,
       eps: 0.00001,
       clip: 100.0,
       wd: 0.0,
@@ -97,7 +102,7 @@ defaults:
   critic_opt:
     {
       opt: adam,
-      lr: 0.0001,
+      lr: 0.00003,
       eps: 0.00001,
       clip: 100.0,
       wd: 0.0,
@@ -110,8 +115,8 @@ defaults:
   # Agent Architecture Details
   reward_head:
     {
-      layers: 5,
-      units: 1024,
+      layers: 3,
+      units: 512,
       act: silu,
       norm: layer,
       dist: symlog_disc,
@@ -124,8 +129,8 @@ defaults:
     }
   cont_head:
     {
-      layers: 5,
-      units: 1024,
+      layers: 3,
+      units: 512,
       act: silu,
       norm: layer,
       dist: binary,
@@ -138,8 +143,8 @@ defaults:
 
   actor:
     {
-      layers: 5,
-      units: 1024,
+      layers: 3,
+      units: 512,
       act: silu,
       norm: layer,
       minstd: 0.1,
@@ -155,8 +160,8 @@ defaults:
     }
   critic:
     {
-      layers: 5,
-      units: 1024,
+      layers: 3,
+      units: 512,
       act: silu,
       norm: layer,
       dist: symlog_disc,
@@ -188,59 +193,64 @@ defaults:
     losses:
       kl: { enabled: true, weight: 1.0, free_nats: 1.0, prior_scale: 0.5, post_scale: 0.1 }
       reconstruction: { enabled: true, weight: 1.0 }
-      joint_embedding: { enabled: true, weight: 5.0 }
-      reward: { enabled: true, weight: 5.0 }
-      discount: { enabled: true, weight: 5.0 }
-      sigreg: { enabled: true, weight: 0.1 }
+      joint_embedding: { enabled: false, weight: 0.2 }
+      reward: { enabled: true, weight: 1.0 }
+      discount: { enabled: true, weight: 1.0 }
+      sigreg: { enabled: false, weight: 0.1 }
+      cpc: { enabled: true, weight: 1.0 }
 
   # Agent Params
   task_behavior: Greedy
   expl_behavior: None
   batch_size: 16
-  batch_length: 64
+  batch_length: 32
   data_loaders: 20
   H: 15
-  gamma: 0.99
+  gamma: 0.997
   lambda_td: 0.95
+  actent: 0.0003
+  target_value_reg: True
 
   # Wrapper Config
   wrapper:
-    length: 0
-    reset: True
-    discretize: 0
-    checks: False
     repeat: 4
+    discretize: 0
+    length: 1500
+    reset: True
+    checks: False
 
   # CARLA Env Params
+  # NOTE: reward config is in carla_env/configs/tasks.yaml (carla_wpt base).
+  # env_params here only affects action, observation, and world settings.
   env_params:
-    num_vehicles: 15
-    success_dist: 500
-    reward:
-      desired_speed: 15.0
-      scales:
-        collision: 20.0
-        proximity: 10.0
-        traffic_light_obey: 2.0
-        traffic_light_violate: 30.0
-        stop_sign: 10.0
-        speeding: 5.0
-        speed: 15.0
-        waypoint: 10.0
-        out_of_lane: 5.0
-        centerline: 1.0
-        heading: 0.5
-        destination_reached: 200.0
-        time: -2.0
-
     action:
-      discrete_acc: [-1.5, 0.5, 1.5, 3.0]
-      discrete_steer: [-1.0, -0.8, -0.6, -0.4, -0.2, 0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+      discrete_acc: [-2.0, 0.0, 2.0]
+      discrete_steer: [-0.6, -0.4, -0.2, 0.0, 0.2, 0.4, 0.6]
     observation:
       camera:
         decode: True
-        pretrained: { enabled: true, backbone: "resnet18", freeze: false }
-        attributes: { image_size_x: 128, image_size_y: 128 }
-      birdeye_wpt: { tssm: false, decode: false, signal: false }
+        tssm: True
+        pretrained: { enabled: false }
+        cnn_blocks: 1
+        encoder_dim_layers: [32, 64, 128, 256, 256]
+        decoder_dim_layers: [256, 256, 128, 64, 32, 3]
+        attributes: { image_size: 128, image_size_x: 128, image_size_y: 128 }
+      birdeye_wpt:
+        tssm: true
+        decode: true
+        pretrained: { enabled: false }
+        cnn_blocks: 1
+        encoder_dim_layers: [32, 64, 8]
+        decoder_dim_layers: [16, 32, 64, 3]
+
+    dynamics_model:
+      hidden_size: 512
+      num_blocks: 2
+
+    reward_model:
+      layers: 3
+      units: 512
+      lidar: { tssm: false, decode: false }
     world:
       carla_port: 2000
       town: Town01

@@ -14,25 +14,15 @@
 
 """Critic Model — Value function estimation.
 
-Single Responsibility: Compute value prediction loss against TD(λ) returns,
-weighted by trajectory survival probability and regularized against slow target.
-
-Aligned with DreamerV3 JAX VFunction.loss():
-  loss  = -dist.log_prob(sg(target))
-  reg   = -dist.log_prob(sg(slow(traj).mean()))
-  loss += slowreg_scale * reg
-  loss  = (loss * sg(traj["weight"])).mean()
-  loss *= loss_scales.critic
-
-Extracted from twister.py inner class for SOLID compliance.
 """
 
+import torch
 from torch_wm.core.base_model import Model as BaseModel
 
 
 class CriticModel(BaseModel):
     """Optimizes the value network to predict expected returns.
-    
+
     Args:
         outer: Reference to the parent WMAgent model for shared networks.
     """
@@ -42,30 +32,39 @@ class CriticModel(BaseModel):
         object.__setattr__(self, "outer", outer)
 
     def forward(self, inputs):
-        feats = self.outer.detached_feats[:, :-1]
-        
-        # 1. Value prediction loss (log-prob of returns under value distribution)
-        values_dist = self.outer.value_network(feats)
-        loss = -values_dist.log_prob(self.outer.detached_returns)
+        # Shared state from ActorModel
+        feats = self.outer.detached_feats    # (B', 1+H, D)
+        returns = self.outer.detached_returns  # (B', H, 1)
+        weights = self.outer.detached_weights  # (B', 1+H, 1)
 
-        # 2. Slow regularization (DreamerV3 parity)
-        # Anchors critic to slowly-updated target to prevent catastrophic forgetting
-        slow_dist = self.outer.v_target(feats)
-        slow_mean = slow_dist.mean() if callable(slow_dist.mean) else slow_dist.mean
-        reg = -values_dist.log_prob(slow_mean.detach())
-        slowreg_scale = self.outer.config.get("loss_scales", {}).get("slowreg", 1.0)
-        loss = loss + slowreg_scale * reg
+        # Value (B', H, 1) — TWISTER line 1105
+        value_dist = self.outer.value_network(feats.detach()[:, :-1])
 
-        # 3. Weight by trajectory survival probability (set by ActorModel)
-        weights = getattr(self.outer, "detached_weights", None)
-        if weights is not None:
-            loss = (loss.squeeze(-1) * weights).mean()
-        else:
-            loss = loss.mean()
+        # Value Loss — TWISTER line 1108
+        value_loss = value_dist.log_prob(returns.detach())
 
-        # 4. Scale by critic loss scale
+        # Slow Regularization — TWISTER lines 1111-1114
+        if self.outer.config.get("target_value_reg", False):
+            with torch.no_grad():
+                target_dist = self.outer.v_target(feats.detach()[:, :-1])
+                value_target = target_dist.mode() if callable(target_dist.mode) else target_dist.mode
+            slow_reg_scale = self.outer.config.get("loss_scales", {}).get(
+                "slowreg", self.outer.config.get("critic_slow_reg_scale", 1.0)
+            )
+            value_loss = value_loss + slow_reg_scale * value_dist.log_prob(value_target.detach())
+
+        # Weight loss — TWISTER line 1117
+        # weights already has shape (B', H) from the ActorModel
+        if weights.dim() == 3:
+            weights = weights[:, :-1].squeeze(dim=-1)
+        value_loss = value_loss * weights
+
+        # Add Loss — TWISTER line 1120
+        critic_loss = -value_loss.mean()
+
+        # Optional critic scale
         critic_scale = self.outer.config.get("loss_scales", {}).get("critic", 1.0)
-        critic_loss = loss * critic_scale
+        critic_loss = critic_loss * critic_scale
 
         self.add_loss("critic", critic_loss)
         return critic_loss

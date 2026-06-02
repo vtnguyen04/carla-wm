@@ -22,9 +22,6 @@ Extracted from twister.py inner class for SOLID compliance.
 
 import torch
 from torch_wm.core.base_model import Model as BaseModel
-from carla_env.toolkit.utils import get_logger
-
-log = get_logger(log_dir=".", job_name="actor_model")
 
 
 class ActorModel(BaseModel):
@@ -53,101 +50,112 @@ class ActorModel(BaseModel):
         feats = self.outer.dynamics_model.get_feat(img_states)
 
         # 1. Predict rewards, values and discounts from World Model heads
-        # We use expectation instead of mode to provide a continuous gradient.
-        # Handle both callable .mean() and property .mean for different dist types.
+        # TWISTER uses .mode() for all heads — NOT .mean().
+        # For Bernoulli (continue_network), .mode returns 0 or 1 (alive/dead),
+        # while .mean() returns a continuous probability that dilutes discounts.
         model_rewards_dist = self.outer.reward_network(feats)
-        model_rewards_mean = model_rewards_dist.mean() if callable(model_rewards_dist.mean) else model_rewards_dist.mean
+        model_rewards_mode = model_rewards_dist.mode() if callable(model_rewards_dist.mode) else model_rewards_dist.mode
 
         if self.outer.config.get("target_value_reg", False):
             values_dist = self.outer.value_network(feats)
         else:
             values_dist = self.outer.v_target(feats)
-        values_mean = values_dist.mean() if callable(values_dist.mean) else values_dist.mean
+        values_mode = values_dist.mode() if callable(values_dist.mode) else values_dist.mode
 
+        # CRITICAL: .mode (property, not callable) for Bernoulli — returns 0/1
         discounts_dist = self.outer.continue_network(feats)
-        discounts_mean = discounts_dist.mean() if callable(discounts_dist.mean) else discounts_dist.mean
+        discounts_mode = discounts_dist.mode if not callable(discounts_dist.mode) else discounts_dist.mode()
 
         # 2. Prepare discounts (B', 1+H, 1)
-        # d is already the CONTINUATION flag from agent.py: d = 1.0 - is_terminal
-        # d=1 means alive, d=0 means dead/terminal.
+        # d is dones (is_terminal): 0=alive, 1=terminal
+        # continuation = 1 - dones: probability of still being alive
         d_flat = d.reshape(-1).float()
-        continuation = d_flat.unsqueeze(-1).unsqueeze(-1).detach() # (B', 1, 1)
+        continuation = (1.0 - d_flat).unsqueeze(-1).unsqueeze(-1).detach() # (B', 1, 1)
 
         # Combine true continuation at t=0 with predicted discounts for t=1..H
-        full_discounts = torch.cat([continuation, discounts_mean[:, 1:]], dim=1)
+        full_discounts = torch.cat([continuation, discounts_mode[:, 1:]], dim=1)
 
         # 3. Compute lambda returns (B', H, 1)
-        # DreamerV3 parity: use horizon-derived discount, NOT gamma
-        H = self.outer.config.get("H", 15)
-        discount = 1.0 - 1.0 / H
+        # TWISTER uses config.gamma directly (not DreamerV3's horizon-based calc)
+        gamma = self.outer.config.get("gamma", 0.997)
+        
         returns = self.outer.compute_td_lambda(
-            rewards=model_rewards_mean[:, 1:],
-            values=values_mean[:, 1:],
-            discounts=discount * full_discounts[:, 1:]
+            rewards=model_rewards_mode[:, 1:],
+            values=values_mode[:, 1:],
+            discounts=gamma * full_discounts[:, 1:]
         )
 
         # 4. Compute Advantage and Normalize
         offset, invscale = self.outer.update_perc(returns)
         normed_returns = (returns - offset) / invscale
-        normed_base = (values_mean[:, :-1] - offset) / invscale
+        normed_base = (values_mode[:, :-1] - offset) / invscale
         advantage = (normed_returns - normed_base).detach().squeeze(-1) # (B', H)
 
         # 5. Policy Optimization
+        if self.outer.config.get("discrete_actions", True):
+            actor_grad = self.outer.config.get("run", {}).get("actor_grad_disc", "reinforce")
+        else:
+            actor_grad = self.outer.config.get("run", {}).get("actor_grad_cont", "backprop")
+            
         policy_dist = self.outer.policy_network(feats.detach())
-        policy_log_prob = policy_dist.log_prob(img_states["action"].detach())[:, :-1]
-
+        
         # Compute trajectory weights (B', H)
         # DreamerV3 parity: weight = cumprod(discount * cont, dim=time) / discount
-        weights = torch.cumprod(discount * full_discounts, dim=1) / discount
+        weights = torch.cumprod(gamma * full_discounts, dim=1).detach() / gamma
         weights = weights[:, :-1].squeeze(-1).detach()
 
         # Store weights for CriticModel (critic needs trajectory weighting too)
         self.outer.detached_weights = weights
-
-        reinforce_loss = - (weights * policy_log_prob * advantage).mean()
+        
+        if actor_grad in ["backprop", "dynamics"]:
+            # Dynamics Backprop: Gradient flows directly through the value and transition models
+            policy_loss = - (weights * advantage).mean()
+        elif actor_grad == "reinforce":
+            # REINFORCE: Gradient flows through log probabilities
+            policy_log_prob = policy_dist.log_prob(img_states["action"].detach())[:, :-1]
+            policy_loss = - (weights * policy_log_prob * advantage.detach()).mean()
+        else:
+            raise NotImplementedError(f"Unknown actor_grad: {actor_grad}")
 
         # 6. Entropy Regularization
         entropy = policy_dist.entropy()[:, :-1]
         
-        # DreamerV3 parity: use 'actent' key (JAX uses config.actent = 1e-2)
+        # DreamerV3 parity: use 'actent' key (JAX uses config.actent = 3e-4)
         entropy_scale = self.outer.config.get("run", {}).get("actent")
         if entropy_scale is None:
-            entropy_scale = self.outer.config.get("actent", 1e-2)
+            entropy_scale = self.outer.config.get("actent", 3e-4)
         entropy_scale = float(entropy_scale)
         
-        # One-time debug to verify config
-        if not hasattr(self, '_ent_debug_done'):
-            self._ent_debug_done = True
-            log.info(f"[ACTOR DEBUG] actent={entropy_scale}, raw_entropy_mean={entropy.mean().item():.6f}, max_entropy={3.784:.3f}")
+        # Structured metrics (routed to W&B/TB via agent.py)
+        self.add_metric("actor/advantage_mean", advantage.mean().item())
+        self.add_metric("actor/advantage_std", advantage.std().item())
+        self.add_metric("actor/entropy_mean", entropy.mean().item())
+        self.add_metric("actor/entropy_scale", entropy_scale)
+        if 'policy_log_prob' in locals():
+            self.add_metric("actor/policy_log_prob", policy_log_prob.mean().item())
         
-        # Periodic actor signal debug (every 50 train steps)
-        if not hasattr(self, '_act_log_count'):
-            self._act_log_count = 0
-        self._act_log_count += 1
-        if self._act_log_count % 50 == 0:
-            with torch.no_grad():
-                raw_ret_mean = returns.mean().item()
-                raw_ret_std = returns.std().item()
-                raw_val_mean = values_mean[:, :-1].mean().item()
-                raw_val_std = values_mean[:, :-1].std().item()
-                raw_rew_mean = model_rewards_mean[:, 1:].mean().item()
-            log.info(f"[ACTOR SIGNAL] step={self._act_log_count} | adv_mean={advantage.mean().item():.4f} adv_std={advantage.std().item():.4f} | entropy={entropy.mean().item():.3f} | reinforce={reinforce_loss.item():.4f}")
-            log.info(f"  -> returns: mean={raw_ret_mean:.3f} std={raw_ret_std:.3f} | values: mean={raw_val_mean:.3f} std={raw_val_std:.3f} | rew_mean={raw_rew_mean:.3f}")
-            
         entropy_loss = - entropy_scale * (weights * entropy).mean()
 
         # 7. Action Smoothness Penalty (DreamerV3 parity)
-        # Penalizes jerky actions in imagination to encourage smooth trajectories
-        smoothness_scale = self.outer.config.get("run", {}).get("imag_smoothness_scale", 1e-4)
+        # Penalizes jerky actions in imagination to encourage smooth trajectories.
+        # In discrete spaces, this acts as a 'stay-the-same-action' regularizer.
+        smoothness_scale = self.outer.config.get("run", {}).get("imag_smoothness_scale")
+        if smoothness_scale is None:
+            smoothness_scale = self.outer.config.get("imag_smoothness_scale", 1e-4)
+        smoothness_scale = float(smoothness_scale)
+
         actions = img_states["action"].detach()
+        # Calculate diffs between consecutive actions in the imagined trajectory
         action_diffs = actions[:, 1:] - actions[:, :-1]
+        
+        # Smoothness penalty is the mean squared difference, weighted by trajectory importance
         smoothness_penalty = (weights * action_diffs.pow(2).mean(-1)).mean()
         smoothness_loss = smoothness_scale * smoothness_penalty
         
-        actor_loss = reinforce_loss + entropy_loss + smoothness_loss
+        actor_loss = policy_loss + entropy_loss + smoothness_loss
         
         self.add_loss("actor", actor_loss)
-        self.add_loss("actor_reinforce", reinforce_loss)
+        self.add_loss("actor_policy", policy_loss)
         self.add_loss("actor_entropy", entropy_loss)
         self.add_loss("actor_smoothness", smoothness_loss)
         

@@ -46,7 +46,10 @@ class VCREGRegularizer(BaseLoss):
         """
         # Get latents from post state
         if 'post' not in model_outputs or 'stoch' not in model_outputs['post']:
-            return torch.tensor(0.0, device=next(iter(model_outputs.values())).device if model_outputs else 'cpu')
+            for value in model_outputs.values():
+                if isinstance(value, torch.Tensor):
+                    return torch.tensor(0.0, device=value.device)
+            return torch.tensor(0.0)
             
         latents = model_outputs['post']['stoch']
         
