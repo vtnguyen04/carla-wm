@@ -10,46 +10,36 @@ class WorldModelAgent(embodied.Agent):
         self.obs_space = obs_space
         self.act_space = act_space
         self.step = step
-        
+
         # Mapping config from embodied to World Model
         wm_config = self._prepare_wm_config(config)
-        
+
         self.device = torch.device(config.get("device", "cuda" if torch.cuda.is_available() else "cpu"))
-        
+
         # Create PyTorch-compatible obs space (CHW) for WMAgent model initialization
         self.pt_obs_space = {}
         for k, v in self.obs_space.items():
-            raw_shape = v.shape
-            # If sequence replay, strip sequence and batch length
-            # A raw CARLA camera tensor will have 3 dims (H, W, C)
-            # A batched replay chunk might have 5 dims (B, T, H, W, C)
-            
-            # Remove sequence/batch dims for Images
-            if len(raw_shape) >= 3 and raw_shape[-1] == 3:
-                raw_shape = raw_shape[-3:]
-            # Remove sequence/batch dims for Vectors
-            elif len(raw_shape) >= 1 and k != 'camera':
-                if raw_shape[-1] > 3: # If vector length > 3
-                    raw_shape = raw_shape[-1:]
-                
-            # If shape ends in 3, it's (H, W, C) -> Permute to (C, H, W)
-            if len(raw_shape) == 3 and raw_shape[-1] == 3:
+            raw_shape = tuple(v.shape)
+
+            # embodied.Space shapes are already unbatched.
+            # Convert HWC to CHW for PyTorch CNNs if necessary.
+            if len(raw_shape) == 3 and raw_shape[-1] in (1, 3) and raw_shape[0] not in (1, 3):
                 pt_shape = (raw_shape[2], raw_shape[0], raw_shape[1])
             else:
                 pt_shape = raw_shape
-                
+
             class SpaceStub:
                 def __init__(self, shape): self.shape = shape
             self.pt_obs_space[k] = SpaceStub(pt_shape)
-        
+
         # Instantiate UnifiedAgent instead of WMAgent
         self.model = UnifiedAgent(
-            env_name=config.task, 
-            override_config=wm_config, 
+            env_name=config.task,
+            override_config=wm_config,
             skip_env=True,
             obs_space=self.pt_obs_space
         ).to(self.device)
-        
+
         # Setup Exploration Module if enabled
         self.expl = None
         if config.get("expl_reward", False):
@@ -63,7 +53,7 @@ class WorldModelAgent(embodied.Agent):
 
         # Critical: Compile to setup optimizers and target networks
         self.model.compile()
-        
+
         self._updates = 0
 
     @property
@@ -72,11 +62,11 @@ class WorldModelAgent(embodied.Agent):
 
     def _prepare_wm_config(self, config):
         c = AttrDict()
-        
+
         # Base architecture default fallbacks (safeguards against missing YAML keys)
         defaults = {
             "dynamics_type": "rssm",
-            "stoch_size": 32, "discrete": 32, "hidden_size": 256, 
+            "stoch_size": 32, "discrete": 32, "hidden_size": 256,
             "num_blocks_trans": 1, "att_context_left": 32,
             "precision": "float32", "model_lr": 1e-4, "actor_lr": 1e-4, "critic_lr": 1e-4,
             "grad_clip": 100.0, "gamma": 0.997, "lambda_td": 0.95,
@@ -84,12 +74,12 @@ class WorldModelAgent(embodied.Agent):
             "contrastive_steps": 1, "uniform_mix": 0.01,
             "contrastive_offsets": None,
             "target_value_reg": False,
-            
+
             # Unified Strategy Flags
             "agent_strategy": "actor_critic",
             "use_ema": False,
             "ema_decay": 0.98,
-            
+
             # Additional architectural hypers mapped from yaml purely decoupled (SOLID OCP)
             "adam_eps": 1e-5, "weight_decay": 1e-6,
             "warmup_steps": 1000, "total_steps": 1000000, "min_lr_ratio": 0.1,
@@ -99,14 +89,14 @@ class WorldModelAgent(embodied.Agent):
             "discrete_acc": [-3.0, 0.0, 3.0],
             "discrete_steer": [-0.6, 0.0, 0.6]
         }
-        
+
         c.update(defaults)
-        
+
         # Inject all keys that exist in yaml config into model configs dynamically
-        keys_to_check = set(list(defaults.keys()) + ["dynamics_type", "discrete_steer", "discrete_acc"])
+        keys_to_check = set(list(defaults.keys()) + ["dynamics_type", "policy_type", "actor_model_type", "diffusion_steps", "discrete_steer", "discrete_acc"])
         for k in keys_to_check:
             if k in config: c[k] = config[k]
-        
+
         # Forward keys from config.run (embodied.Config nests under 'run.')
         run_keys = ["actent", "imag_smoothness_scale", "actor_entropy", "discount_lambda"]
         try:
@@ -116,7 +106,7 @@ class WorldModelAgent(embodied.Agent):
                     c[k] = float(run_cfg[k])
         except (KeyError, AttributeError):
             pass
-        
+
         # Forward optimizer configs (nested dicts under defaults)
         for opt_key in ["model_opt", "actor_opt", "critic_opt"]:
             if opt_key in config:
@@ -129,7 +119,7 @@ class WorldModelAgent(embodied.Agent):
                     except (ValueError, TypeError):
                         opt_dict[k] = v
                 c[opt_key] = opt_dict
-        
+
         # Check env_params for nested action config if not at top level
         env_action = config.get("env_params", {}).get("action", {})
         if "discrete_acc" in env_action: c.discrete_acc = env_action["discrete_acc"]
@@ -138,17 +128,17 @@ class WorldModelAgent(embodied.Agent):
         # Explicitly copy 'modules' to preserve loss manager settings
         if "modules" in config:
             c.modules = config["modules"]
-        
+
         # Calculate num_actions correctly based on configured lists
         n_acc = len(c.discrete_acc)
         n_steer = len(c.discrete_steer)
         c.num_actions = n_acc * n_steer
         c.discrete_actions = True
-        
+
         # Fallback to observation space if needed
         if "action" in self.act_space:
             space = self.act_space["action"]
-            if hasattr(space, "n") and isinstance(space.n, (int, np.integer)) and space.n > 0: 
+            if hasattr(space, "n") and isinstance(space.n, (int, np.integer)) and space.n > 0:
                 c.num_actions = int(space.n)
                 c.discrete_actions = True
             elif getattr(space, "discrete", False) is True or \
@@ -170,15 +160,25 @@ class WorldModelAgent(embodied.Agent):
                 c.num_actions = space.shape[-1]
                 c.discrete_actions = False
 
-        
+
         c.env_params = AttrDict()
+        c.env_params.observation = AttrDict()
+        
+        # 1. Start with the model's predefined env_params.observation (e.g. from twister.yaml)
+        config_env_obs = config.get("env_params", {}).get("observation", {})
+        for k, v in config_env_obs.items():
+            c.env_params.observation[k] = AttrDict(v) if isinstance(v, dict) else v
+            
+        # 2. Merge with the environment's observation config (e.g. from common.yaml/tasks.yaml)
         env_cfg = config.get("env", {})
         if "observation" in env_cfg:
-            c.env_params.observation = AttrDict(env_cfg["observation"])
+            for k, v in env_cfg["observation"].items():
+                if k not in c.env_params.observation:
+                    c.env_params.observation[k] = AttrDict(v) if isinstance(v, dict) else v
+                elif isinstance(v, dict) and isinstance(c.env_params.observation[k], dict):
+                    c.env_params.observation[k].update(v)
         else:
-            # Build observation config from obs_space
-            # Shapes from replay include the sequence dim (L, H, W, C).
-            # MultiEncoderNetwork expects raw sensor shape (H, W, C), so strip leading dims.
+            # Build observation config from obs_space if no env.observation is provided
             image_keys = []
             obs_entries = {}
             enabled_keys = []
@@ -186,24 +186,23 @@ class WorldModelAgent(embodied.Agent):
                 if k in ("reward", "is_first", "is_last", "is_terminal"):
                     continue
                 enabled_keys.append(k)
-                # Strip all leading dims to get the raw sensor shape (last 3 dims for images)
-                raw_shape = v.shape
-                if len(raw_shape) >= 4 and raw_shape[-1] == 3:
-                    raw_shape = raw_shape[-3:]  # (H, W, C) for images
-                elif len(raw_shape) >= 2:
-                    raw_shape = raw_shape[-1:]  # (D,) for vectors
-                obs_entries[k] = AttrDict({
+                raw_shape = tuple(v.shape)
+
+                # Fetch override from config if it exists
+                override = config_env_obs.get(k, {})
+                entry = AttrDict({
                     "shape": list(raw_shape),
-                    # BEV is navigation signal only — encode but don't feed TSSM or reconstruct
-                    "decode": k != "birdeye_wpt",
-                    "tssm": k != "birdeye_wpt",
+                    "decode": True,
+                    "tssm": True,
                 })
-            
-            c.env_params.observation = AttrDict({
+                entry.update(override)
+                obs_entries[k] = entry
+
+            c.env_params.observation.update({
                 "enabled": enabled_keys,
                 **obs_entries
             })
-            
+
         c.env_params.action = AttrDict({"discrete": c.discrete_actions, "n_cmds": c.num_actions})
         c.batch_size = config.get("batch_size", 4)
         c.batch_length = config.get("batch_length", 32)
@@ -221,14 +220,14 @@ class WorldModelAgent(embodied.Agent):
         # Extract batch size and ensure batch dimension for all sensors
         first_key = next(k for k in obs if isinstance(obs[k], torch.Tensor))
         first_val = obs[first_key]
-        
+
         # Determine if we need to add a batch dimension
         needs_unsquash = False
         if first_val.dim() == 3 and (first_key == 'camera' or first_key == 'birdeye_wpt'):
             needs_unsquash = True
         elif first_val.dim() == 1 and first_key != 'camera' and first_key != 'birdeye_wpt':
             needs_unsquash = True
-            
+
         if needs_unsquash:
             obs = {k: v.unsqueeze(0) if isinstance(v, torch.Tensor) else v for k, v in obs.items()}
             B = 1
@@ -255,14 +254,14 @@ class WorldModelAgent(embodied.Agent):
         with torch.no_grad():
             # Delegate to UnifiedAgent.act which handles strategy switching
             action, new_state = self.model.act(obs, is_first, sample=(mode in ("train", "explore")))
-            
+
         # Convert to numpy for env (maintain batch dimension B, strip sequence dimension L=1)
-        # Sequence dimension is usually dim 1: (B, 1, ...). If len == 3, squeeze(1). 
+        # Sequence dimension is usually dim 1: (B, 1, ...). If len == 3, squeeze(1).
         if action.dim() == 3:
             action = action.squeeze(1)
         elif action.dim() == 1:
             action = action.unsqueeze(0)
-            
+
         action_np = action.cpu().numpy()
         state_np = tree_map(lambda x: x.cpu().numpy() if x is not None else None, new_state)
         return {"action": action_np}, state_np
@@ -278,7 +277,7 @@ class WorldModelAgent(embodied.Agent):
                           "collision", "id", "env_action")}
         a = data["action"]
         r = data["reward"]
-        d = 1.0 - data.get("is_terminal", torch.zeros_like(r)).float()
+        d = data.get("is_terminal", torch.zeros_like(r)).float()  # dones (0=continue, 1=terminal)
         f = data["is_first"].float()
 
         # Ensure correct dims: (B, L, 1)
@@ -291,7 +290,7 @@ class WorldModelAgent(embodied.Agent):
         # 1. World Model Training Step
         wm_loss_dict, wm_metrics, _ = self.model.world_model.train_step(
             inputs, inputs, self.model.config.precision, None, 1, 1, False)
-        
+
         # 2. Intrinsic Reward / Exploration Training
         if self.expl is not None:
             # We need features and next states for Disag
@@ -301,7 +300,7 @@ class WorldModelAgent(embodied.Agent):
             with torch.no_grad():
                 posts = self.model.detached_posts # (B*L, 1, D)
                 feats = self.model.dynamics_model.get_feat(posts)
-                
+
                 # Targets are the next states
                 # In (B, L, D) world, we shift by 1
                 # posts['deter'] is (B, L, D)
@@ -309,10 +308,10 @@ class WorldModelAgent(embodied.Agent):
                 targets = deter[:, 1:]
                 input_feats = feats.reshape(self.config.batch_size, -1, feats.shape[-1])[:, :-1]
                 input_actions = a[:, :-1]
-            
+
             expl_metrics = self.expl.train_step(input_feats, input_actions, targets)
             wm_metrics.update(expl_metrics)
-            
+
             # Add intrinsic reward to total reward for actor/critic
             intrinsic_reward = self.expl(input_feats, input_actions).unsqueeze(-1)
             # Clip or scale intrinsic reward
@@ -330,7 +329,7 @@ class WorldModelAgent(embodied.Agent):
 
         # 4. Consolidate and group metrics to eliminate duplicates
         metrics = {}
-        
+
         def add_grouped_metrics(src, group_name):
             if not src: return
             for k, v in src.items():
@@ -347,12 +346,12 @@ class WorldModelAgent(embodied.Agent):
         add_grouped_metrics(wm_loss_dict, "wm")
         add_grouped_metrics(act_loss_dict, "actor")
         add_grouped_metrics(crit_loss_dict, "critic")
-        
+
         # Flat keys for test compatibility (use grouped keys as canonical)
         metrics['wm_loss'] = metrics.get('wm/loss', torch.tensor(0.0))
         if isinstance(metrics['wm_loss'], torch.Tensor):
             metrics['wm_loss'] = metrics['wm_loss'].item() if metrics['wm_loss'].dim() == 0 else metrics['wm_loss'].mean().item()
-        
+
         # Add auxiliary metrics (grad norms, model-specific stats)
         for src in [wm_metrics, act_metrics, crit_metrics]:
             for k, v in src.items():
@@ -360,6 +359,100 @@ class WorldModelAgent(embodied.Agent):
                     # If it's already grouped (has /), keep it, else put in stats/
                     key = k if "/" in k else f"stats/{k}"
                     metrics[key] = v
+
+        # ═══════════════════════════════════════════════════════════════════
+        # 5. DETAILED MONITORING — Per-Component Health Diagnostics
+        #    Actor/Critic internal stats (advantage, entropy, AWR weights)
+        #    flow automatically via act_metrics/crit_metrics from add_metric().
+        #    Here we only compute metrics unique to the agent scope.
+        # ═══════════════════════════════════════════════════════════════════
+        try:
+            with torch.no_grad():
+                # ── REWARD HEAD ──
+                if hasattr(self.model, '_last_outputs') and 'model_rewards' in self.model._last_outputs:
+                    rew_dist = self.model._last_outputs['model_rewards']
+                    rew_pred = rew_dist.mean() if callable(rew_dist.mean) else rew_dist.mean
+                    metrics['heads/reward_pred_mean'] = rew_pred.mean().item()
+                    metrics['heads/reward_pred_std'] = rew_pred.std().item()
+                    r_flat = r[:, :rew_pred.shape[1]]
+                    if r_flat.shape == rew_pred.shape:
+                        metrics['heads/reward_mae'] = (rew_pred - r_flat).abs().mean().item()
+
+                # ── CONTINUE HEAD ──
+                if hasattr(self.model, '_last_outputs') and 'model_discounts' in self.model._last_outputs:
+                    cont_dist = self.model._last_outputs['model_discounts']
+                    cont_pred = cont_dist.mean() if callable(cont_dist.mean) else cont_dist.mean
+                    metrics['heads/continue_pred_mean'] = cont_pred.mean().item()
+                    metrics['heads/continue_pred_min'] = cont_pred.min().item()
+
+                # ── LATENT SPACE ──
+                posts = getattr(self.model, 'detached_posts', None)
+                if posts is not None:
+                    logits = posts.get('logits')
+                    stoch = posts.get('stoch')
+                    if logits is not None and logits.dim() >= 3:
+                        # Use actual logits to compute true posterior entropy
+                        probs = torch.softmax(logits.reshape(-1, logits.shape[-1]), dim=-1)
+                        metrics['latent/stoch_entropy'] = -(probs * (probs + 1e-8).log()).sum(-1).mean().item()
+                    elif stoch is not None and stoch.dim() >= 3:
+                        # Fallback: stoch is one-hot, softmax gives constant entropy
+                        probs = torch.softmax(stoch.reshape(-1, stoch.shape[-1]), dim=-1)
+                        metrics['latent/stoch_entropy'] = -(probs * (probs + 1e-8).log()).sum(-1).mean().item()
+                    if stoch is not None:
+                        # stoch_std of one-hot is always ~0.174 (mathematical constant) — useless.
+                        # Instead, log max probability: measures how "peaked" the posterior is.
+                        if logits is not None and logits.dim() >= 3:
+                            probs_for_std = torch.softmax(logits.reshape(-1, logits.shape[-1]), dim=-1)
+                            metrics['latent/stoch_max_prob'] = probs_for_std.max(-1)[0].mean().item()
+                            metrics['latent/stoch_std'] = probs_for_std.std(-1).mean().item()
+                        else:
+                            metrics['latent/stoch_std'] = stoch.float().std().item()
+                    deter = posts.get('deter')
+                    if deter is not None:
+                        metrics['latent/deter_std'] = deter.float().std().item()
+                        metrics['latent/deter_norm'] = deter.float().norm(dim=-1).mean().item()
+
+                # ── RL RETURNS & VALUE ──
+                ret = getattr(self.model, 'detached_returns', None)
+                if ret is not None:
+                    metrics['rl/returns_mean'] = ret.mean().item()
+                    metrics['rl/returns_std'] = ret.std().item()
+                feats = getattr(self.model, 'detached_feats', None)
+                if feats is not None:
+                    val_dist = self.model.value_network(feats)
+                    val_mean = val_dist.mean() if callable(val_dist.mean) else val_dist.mean
+                    metrics['rl/value_pred_mean'] = val_mean.mean().item()
+                    metrics['rl/value_pred_std'] = val_mean.std().item()
+
+                # ── LEARNING RATES ──
+                for opt_name, opt in self.model.optimizer.items():
+                    if hasattr(opt, 'param_groups') and opt.param_groups:
+                        metrics[f'optim/{opt_name}_lr'] = opt.param_groups[0]['lr']
+                        if 'grad_norm' in opt.param_groups[0]:
+                            metrics[f'optim/{opt_name}_grad_norm'] = float(opt.param_groups[0]['grad_norm'])
+
+                # ── GRADIENT HEALTH ──
+                for prefix, module in [
+                    ('actor', self.model.policy_network),
+                    ('critic', self.model.value_network),
+                    ('dynamics', self.model.dynamics_model),
+                    ('encoder', self.model.encoder_network),
+                ]:
+                    gnorm = sum(p.grad.data.norm(2).item() ** 2
+                                for _, p in module.named_parameters() if p.grad is not None) ** 0.5
+                    if gnorm > 0:
+                        metrics[f'grads/{prefix}_norm'] = gnorm
+
+                # ── ENVIRONMENT ──
+                metrics['env/reward_batch_mean'] = r.mean().item()
+                metrics['env/reward_batch_max'] = r.max().item()
+                metrics['env/terminal_rate'] = d.mean().item()
+                metrics['train/updates'] = self._updates
+
+        except Exception:
+            if self._updates % 100 == 0:
+                import traceback
+                traceback.print_exc()
 
         return {}, state, metrics
 
@@ -391,19 +484,19 @@ class WorldModelAgent(embodied.Agent):
 
             loaded_state_dict = data.get("model", data)
             current_state_dict = self.model.state_dict()
-            
+
             filtered_state_dict = {}
             for k, v in loaded_state_dict.items():
                 if k not in current_state_dict:
                     continue
-                
+
                 if hasattr(v, "shape"):
                     v_shape = tuple(v.shape)
                 elif isinstance(v, (list, tuple)):
                     v_shape = tuple(torch.tensor(v).shape)
                 else:
                     continue
-                    
+
                 curr_shape = tuple(current_state_dict[k].shape)
                 if v_shape == curr_shape:
                     if isinstance(v, torch.Tensor):
@@ -414,7 +507,7 @@ class WorldModelAgent(embodied.Agent):
             self.model.load_state_dict(filtered_state_dict, strict=False)
             self._updates = data.get("updates", 0)
             self.model.to(self.device)
-            
+
         except Exception as e:
             print(f"Error loading checkpoint: {e}")
 

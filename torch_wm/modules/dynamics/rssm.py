@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.distributions as tfd
 
 from torch_wm.core.registry import ModuleRegistry
@@ -155,6 +156,7 @@ class RSSM(nn.Module):
             prev_state = {k: v.squeeze(1) if isinstance(v, torch.Tensor) and v.dim() >= 3 and v.shape[1] == 1 else v for k, v in prev_state.items()}
         if isinstance(prev_action, torch.Tensor) and prev_action.dim() >= 3 and prev_action.shape[1] == 1:
             prev_action = prev_action.squeeze(1)
+        prev_action = self._match_action_dim(prev_action)
 
         prev_stoch = prev_state["stoch"]
         if isinstance(self.action_clip, (int, float)) and self.action_clip > 0.0 and prev_action is not None:
@@ -191,6 +193,7 @@ class RSSM(nn.Module):
             prev_state = {k: v.squeeze(1) if isinstance(v, torch.Tensor) and v.dim() >= 3 and v.shape[1] == 1 else v for k, v in prev_state.items()}
         if isinstance(prev_action, torch.Tensor) and prev_action.dim() >= 3 and prev_action.shape[1] == 1:
             prev_action = prev_action.squeeze(1)
+        prev_action = self._match_action_dim(prev_action)
         if isinstance(embed, torch.Tensor) and embed.dim() >= 3 and embed.shape[1] == 1:
             embed = embed.squeeze(1)
             
@@ -248,6 +251,7 @@ class RSSM(nn.Module):
         # RSSM Observe expects a loop over time
         batch_size = prev_actions.shape[0]
         seq_len = prev_actions.shape[1]
+        prev_actions = self._match_action_dim(prev_actions)
 
         if prev_state is None:
             prev_state = self.initial(batch_size=batch_size, seq_length=1, dtype=prev_actions.dtype, device=prev_actions.device)
@@ -258,8 +262,10 @@ class RSSM(nn.Module):
         priors = {k: [] for k in keys}
 
         # Prepare embeds
-        # In multi-encoder, the output of encoder is a dict. We usually flatten stoch as embed.
-        embeds = states["stoch"].flatten(-2, -1) if states["stoch"].dim() == 4 else states["stoch"]
+        if "latent" in states:
+            embeds = states["latent"]
+        else:
+            embeds = states["stoch"].flatten(-2, -1) if states["stoch"].dim() == 4 else states["stoch"]
 
         state = prev_state
         for t in range(seq_len):
@@ -281,6 +287,14 @@ class RSSM(nn.Module):
         priors["hidden"] = None
 
         return posts, priors
+
+    def _match_action_dim(self, actions):
+        if actions is None or actions.shape[-1] == self.num_actions:
+            return actions
+        if actions.shape[-1] > self.num_actions:
+            return actions[..., :self.num_actions]
+        pad = self.num_actions - actions.shape[-1]
+        return F.pad(actions, (0, pad))
 
     def imagine(self, p_net, prev_state, img_steps=1, is_firsts=None, is_firsts_hidden=None, actions=None):
         state = {k: v.squeeze(1) if isinstance(v, torch.Tensor) and v.dim() > 2 else v for k, v in prev_state.items()}

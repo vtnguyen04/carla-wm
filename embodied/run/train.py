@@ -4,7 +4,7 @@ import numpy as np
 from tqdm import tqdm
 from carla_env.toolkit.utils import get_logger
 
-def train(agent, env, replay, logger, args):
+def train(agent, env, replay, logger, args, prefill_policy=None):
     logdir = embodied.Path(args.logdir)
     logdir.mkdirs()
     log = get_logger(log_dir=str(logdir), job_name="train")
@@ -66,9 +66,11 @@ def train(agent, env, replay, logger, args):
     driver.on_step(lambda tran, _, worker: replay.add(tran, worker))
 
     log.info("Prefill train dataset.")
-    random_agent = embodied.RandomAgent(env.act_space, args.actor_dist_disc)
+    if prefill_policy is None:
+        random_agent = embodied.RandomAgent(env.act_space, args.actor_dist_disc)
+        prefill_policy = random_agent.policy
     while len(replay) < max(args.batch_steps, args.train_fill):
-        driver(random_agent.policy, steps=100)
+        driver(prefill_policy, steps=100)
     logger.add(metrics.result())
     logger.write()
 

@@ -20,10 +20,11 @@ import torch.nn.functional as F
 # NeuralNets
 from torch_wm import modules
 from torch_wm.utils import get_module_and_params
+from torch_wm.utils.checkpoint import checkpoint_forward
 
 class MultiLayerPerceptron(nn.Module):
 
-    def __init__(self, dim_input, dim_layers, act_fun="ReLU", norm=None, drop_rate=0.0, weight_init="default", bias_init="default", bias=True, residual=False):
+    def __init__(self, dim_input, dim_layers, act_fun="ReLU", norm=None, drop_rate=0.0, weight_init="default", bias_init="default", bias=True, residual=False, use_checkpointing=False):
         super(MultiLayerPerceptron, self).__init__()
 
         # Get act_fun and norm
@@ -63,13 +64,18 @@ class MultiLayerPerceptron(nn.Module):
         else:
             self.residual = [residual for layer_id in range(len(self.layers))]
 
+        self.use_checkpointing = use_checkpointing
+
     def forward(self, x):
 
         # Layers
         for layer_id, layer in enumerate(self.layers):
-            if self.residual[layer_id]:
-                x = layer(x) + x
-            else:
-                x = layer(x)
+            x = checkpoint_forward(
+                layer, 
+                x, 
+                use_checkpointing=self.use_checkpointing, 
+                training=self.training, 
+                residual=self.residual[layer_id]
+            )
 
         return x

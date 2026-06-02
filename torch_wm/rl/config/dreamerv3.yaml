@@ -4,183 +4,256 @@ defaults:
   task: carla_navigation
   num_envs: 1
   device: cuda
-  precision: float32
+  precision: 16-mixed
+  gradient_checkpointing: True
 
-  # DreamerV3 Architecture
-  dynamics_type: "rssm"       # DreamerV3 Recurrent State-Space Model
-  # Core State Space Model Dimensions
+  dynamics_type: "rssm"
+  policy_type: "default_policy"
+  actor_model_type: "default_actor"
+  num_actions: 28
+  diffusion_steps: 10
   stoch_size: 32
   discrete: 32
-  hidden_size: 128      # REDUCED for testing
-  num_blocks_trans: 1
+  hidden_size: 768
+  num_blocks_trans: 3
+  att_context_left: 24
 
   # Neural Network Capacity
   dim_cnn: 32
-  # [dim_cnn, 2*dim_cnn, 4*dim_cnn, 8*dim_cnn] configures 4 encoder blocks. Increase for a deeper/wider encoder.
   encoder_dim_layers: [32, 64, 128, 256]
-  # [8*dim, 4*dim, 2*dim, 1*dim, 3] configures a 5-layer upscaling decoder.
   decoder_dim_layers: [256, 128, 64, 32, 3]
 
-  # Temporal Contrastive Settings
+  contrastive_steps: 1
+  contrastive_offsets: [15]
   uniform_mix: 0.01
 
-  # Optimization — Tuned for World Model Excellence
-  # ───────────────────────────────────────────────
-  # LaplaceDist(sum) trả về ~10000 cho ảnh 3×128×128 (mỗi pixel L1 ≈ 0.2)
-  # Reward/Discount (SymLogDiscrete) trả về ~1-5
-  # KL trả về ~1-10 nats
-  # CPC (CrossEntropy) trả về ~2-4
-  # => Phải cân bằng weight cho rec RẤT NHỎ so với các loss khác
-  model_lr: 1e-4         # Conservative LR — tránh overshooting với sum-L1 gradient lớn
-  actor_lr: 3e-5         # Actor chậm hơn world model để ổn định policy
-  critic_lr: 3e-5        # Critic track theo actor
-  adam_eps: 1e-8          # Chuẩn Adam epsilon cho mixed-precision stability
-  warmup_steps: 2500     # Phải warm lâu hơn vì sum-L1 gradient ban đầu rất lớn
-  total_steps: 1000000
-  min_lr_ratio: 0.1
-  grad_clip: 10.0        # GIẢM MẠNH từ 100 → 10. Sum-L1 tạo gradient ~1000x lớn hơn MSE-mean
-  weight_decay: 1e-6
-  horizon: 15
-  batch_size: 4
-  batch_length: 32
-
-  # RL Agent
-  gamma: 0.997
-  lambda_td: 0.95
-  H: 15
-  target_value_reg: False
-  actor_entropy: 1e-2
-
-  # Modules & Losses — Balanced cho hội tụ World Model tối ưu
-  # ─────────────────────────────────────────────────────────
-  # REC(sum-L1) ≈ 10000, KL ≈ 1-10, Reward ≈ 1-5, CPC ≈ 2-4, Curvature ≈ 0-1
-  # => weight * raw_loss phải cùng bậc magnitude (~1-10) để gradient không bị 1 loss chiếm hết
-  modules:
-    losses:
-      kl:
-        enabled: False    # Disabled in favor of kl_balancing
-        weight: 1.0
-        free_nats: 1.0
-        prior_scale: 0.5
-        post_scale: 0.1
-      kl_balancing:
-        enabled: True     # DreamerV3 KL Balancing
-        weight: 1.0
-        dyn_scale: 0.2
-        rep_scale: 0.8
-        free_bits: 1.0
-      reconstruction:
-        enabled: True
-        weight: 0.001     # rec ≈ 10000 × 0.001 = effective ≈ 10 ✓ (cân bằng với KL)
-      reward:
-        enabled: True
-        weight: 1.0       # reward ≈ 1-5 → effective ≈ 1-5 ✓
-      cpc:
-        enabled: False    # Algorithm-specific
-        weight: 0.1
-      discount:
-        enabled: True
-        weight: 5.0       # Discount loss rất nhỏ (~0.1-0.5) → cần boost để model học done signal
-      sigreg: { enabled: true, weight: 0.1 }
-
-  regularizers:
-    curvature:
-      enabled: False    # Algorithm-specific
-      weight: 0.1
-    straightening:
-      enabled: False
-      weight: 1.0
-      type: cos
-    vcreg:
-      enabled: False
-      std_weight: 1.0
-      cov_weight: 1.0
-
   # Replay Buffer
-  replay_size: 1e6
-  replay_min: 1000
+  replay_size: 100000
 
   # Run Control
-  steps: 1e6
-  eval_every: 1e4
-  eval_episodes: 5
+  steps: 200000
+  eval_every: 200
+  eval_episodes: 1
   log_every: 10
-  save_every: 100
-  train_ratio: 32
-  train_fill: 100
+  save_every: 400
+  train_ratio: 512
+  train_fill: 500
+  replay_min: 500
   tensorboard: False
   wandb: True
   wandb_project: "carTwister-dreamerv3"
 
   run:
+    script: train
+    expl_until: 5000
+    eval_initial: True
+    eval_samples: 1
+    eval_fill: 0
     actor_dist_disc: onehot
-    sync_every: 1
-    expl_until: 0
+    actor_entropy: 0.003
+    actor_dist_cont: normal
+    actor_grad_disc: reinforce
+    actor_grad_cont: backprop
+    critic_type: vfunction
+    imag_horizon: 15
+    imag_unroll: False
+    entropy: 0.01
+    discount_lambda: 0.95
+    critic_slowreg: logprob
+    slow_critic_update: 1
+    slow_critic_fraction: 0.02
+    retnorm: { impl: perc_ema, decay: 0.99, max: 1.0, perclo: 5.0, perchi: 95.0 }
+    actent: 0.0003
+    imag_smoothness_scale: 0.0001
+    sync_every: 10
     log_zeros: False
-    log_keys_video: [camera]
-    log_keys_sum: '^reward$'
-    log_keys_mean: '^reward$'
-    log_keys_max: '^reward$'
-    from_checkpoint: ''
+    log_keys_video: ["camera"]
+    log_keys_sum: "^$"
+    log_keys_mean: "(log_entropy)"
+    log_keys_max: "^$"
+    from_checkpoint: ""
+
+  # Optimization (DreamerV3 style)
+  model_opt:
+    {
+      opt: adam,
+      lr: 0.0001,
+      eps: 0.00000001,
+      clip: 1000.0,
+      wd: 0.0,
+      warmup: 0,
+      decay_steps: 50000000,
+      min_lr: 0.00004,
+      lateclip: 0.0,
+    }
+  actor_opt:
+    {
+      opt: adam,
+      lr: 0.00003,
+      eps: 0.00001,
+      clip: 100.0,
+      wd: 0.0,
+      warmup: 0,
+      decay_steps: 50000000,
+      min_lr: 0.00001,
+      lateclip: 0.0,
+    }
+  critic_opt:
+    {
+      opt: adam,
+      lr: 0.00003,
+      eps: 0.00001,
+      clip: 100.0,
+      wd: 0.0,
+      warmup: 0,
+      decay_steps: 50000000,
+      min_lr: 0.00001,
+      lateclip: 0.0,
+    }
+
+  # Agent Architecture Details
+  reward_head:
+    {
+      layers: 3,
+      units: 512,
+      act: silu,
+      norm: layer,
+      dist: symlog_disc,
+      outscale: 0.0,
+      outnorm: False,
+      inputs: [deter, stoch],
+      winit: normal,
+      fan: avg,
+      bins: 255,
+    }
+  cont_head:
+    {
+      layers: 3,
+      units: 512,
+      act: silu,
+      norm: layer,
+      dist: binary,
+      outscale: 1.0,
+      outnorm: False,
+      inputs: [deter, stoch],
+      winit: normal,
+      fan: avg,
+    }
+
+  actor:
+    {
+      layers: 3,
+      units: 512,
+      act: silu,
+      norm: layer,
+      minstd: 0.1,
+      maxstd: 1.0,
+      outscale: 1.0,
+      outnorm: False,
+      unimix: 0.01,
+      inputs: [deter, stoch],
+      entropy: 0.3,
+      winit: normal,
+      fan: avg,
+      symlog_inputs: False,
+    }
+  critic:
+    {
+      layers: 3,
+      units: 512,
+      act: silu,
+      norm: layer,
+      dist: symlog_disc,
+      outscale: 0.0,
+      outnorm: False,
+      inputs: [deter, stoch],
+      winit: normal,
+      fan: avg,
+      bins: 255,
+      symlog_inputs: False,
+    }
+
+  # Loss Scales
+  loss_scales:
+    {
+      image: 1.5,
+      vector: 1.0,
+      reward: 1.0,
+      cont: 1.0,
+      dyn: 0.5,
+      rep: 0.1,
+      actor: 1.0,
+      critic: 1.0,
+      slowreg: 1.0,
+    }
+
+  # Modules & Losses
+  modules:
+    losses:
+      kl: { enabled: true, weight: 1.0, free_nats: 1.0, prior_scale: 0.5, post_scale: 0.1 }
+      reconstruction: { enabled: true, weight: 1.0 }
+      joint_embedding: { enabled: false, weight: 0.2 }
+      reward: { enabled: true, weight: 1.0 }
+      discount: { enabled: true, weight: 1.0 }
+      sigreg: { enabled: false, weight: 0.1 }
+      cpc: { enabled: true, weight: 1.0 }
+
+  # Agent Params
+  task_behavior: Greedy
+  expl_behavior: None
+  batch_size: 20
+  batch_length: 64
+  data_loaders: 20
+  H: 15
+  gamma: 0.997
+  lambda_td: 0.95
+  actent: 0.0003
+  target_value_reg: True
 
   # Wrapper Config
   wrapper:
-    length: 4000
-    reset: True
+    repeat: 4
     discretize: 0
+    length: 1500
+    reset: True
     checks: False
-    repeat: 1
 
   # CARLA Env Params
   env_params:
-    num_vehicles: 40
-    success_dist: 500
+    action:
+      discrete_acc: [-2.0, 0.0, 1.0, 2.0]
+      discrete_steer: [-0.6, -0.4, -0.2, 0.0, 0.2, 0.4, 0.6]
+    reward:
+      desired_speed: 4.0
     observation:
       camera:
+        shape: [64, 64, 3]
         decode: True
-        pretrained:
-          enabled: True
-          backbone: "resnet18"
-          freeze: True
-          weights: "IMAGENET1K_V1"
+        tssm: True
+        pretrained: { enabled: false }
+        cnn_blocks: 1
+        encoder_dim_layers: [32, 64, 128, 256]
+        decoder_dim_layers: [256, 128, 64, 32, 3]
+        attributes: { image_size: 64, image_size_x: 64, image_size_y: 64 }
       birdeye_wpt:
-        tssm: False
-        decode: False
-        signal: True
-    action:
-      discrete_acc: [-3.0, -2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0, 3.0]
-      discrete_steer: [-1.0, -0.9, -0.8, -0.7, -0.6, -0.5, -0.4, -0.3, -0.2, -0.1, 0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+        shape: [64, 64, 3]
+        tssm: true
+        decode: true
+        pretrained: { enabled: false }
+        cnn_blocks: 1
+        encoder_dim_layers: [32, 64, 128, 256]
+        decoder_dim_layers: [256, 128, 64, 32, 3]
+        attributes: { image_size: 64, image_size_x: 64, image_size_y: 64 }
 
+    dynamics_model:
+      hidden_size: 512
+      num_blocks: 2
+
+    reward_model:
+      layers: 3
+      units: 512
+      lidar: { tssm: false, decode: false }
     world:
       carla_port: 2000
-      town: Town03
-      fixed_delta_seconds: 0.05 # 20Hz
-
-  # Display Config (Includes reward hyperparameters passed down to env config)
-  display:
-    enable: True
-    hires: True
-    width: 1280
-    height: 720
-    reward:
-      desired_speed: 8.0
-      scales:
-        # T1: Safety
-        collision: 200.0       # Tăng cực cao để ngăn chặn Speed Dominance
-        proximity: 10.0        # Smooth tailgating penalty max intensity
-        # T2: Traffic Law
-        traffic_light_obey: 4.0 # Tăng gấp đôi để reward dừng ngã tư
-        stop_sign: 10.0
-        speeding: 5.0
-        # T3: Navigation
-        waypoint: 1.0          # Giảm từ 5.0 xuống 1.0 để chống Double-Dipping
-        speed: 1.0
-        out_of_lane: 1.0
-        centerline: 0.5
-        heading: 0.5
-        destination_reached: 50.0
-        time: 0.0
-        # T4: Comfort (Steering Smoothness)
-        steer_rate: 5.0        # Trừng phạt bẻ lái gắt
-        steer_jerk: 5.0        # Trừng phạt nhấp nhả vô lăng liên tục (Zig-zag)
-        speed_steer: 5.0       # Trừng phạt bẻ lái ở tốc độ cao
+      town: Town01
+      fixed_delta_seconds: 0.05

@@ -67,7 +67,7 @@ class ReconstructionLoss(BaseLoss):
             for key in combined_keys:
                 if key in reconstructions and key in targets:
                     recon_dist = reconstructions[key]
-                    target = targets[key]
+                    target = self._align_target(recon_dist, targets[key])
                     # MSE Dist log_prob handles (B, L, C, H, W) or (B, L, D) properly
                     key_loss = -recon_dist.log_prob(target.detach()).mean()
                     total_loss = total_loss + key_loss
@@ -77,7 +77,8 @@ class ReconstructionLoss(BaseLoss):
             if num_keys == 0:
                 for key in reconstructions.keys():
                     if key in targets:
-                        total_loss += -reconstructions[key].log_prob(targets[key].detach()).mean()
+                        target = self._align_target(reconstructions[key], targets[key])
+                        total_loss += -reconstructions[key].log_prob(target.detach()).mean()
                         num_keys += 1
         
         # Case 2: Legacy Single-Modal (Distribution object)
@@ -101,3 +102,17 @@ class ReconstructionLoss(BaseLoss):
     def reset(self) -> None:
         """Reset reconstruction loss state."""
         self._metrics.clear()
+
+    @staticmethod
+    def _align_target(recon_dist, target):
+        if not hasattr(recon_dist, "mode"):
+            return target
+        mode = recon_dist.mode() if callable(recon_dist.mode) else recon_dist.mode
+        if mode.shape == target.shape:
+            return target
+        if target.dim() == 5 and mode.dim() == 5:
+            channels_last = target.shape[-1] == mode.shape[2]
+            spatial_match = target.shape[2:4] == mode.shape[3:5]
+            if channels_last and spatial_match:
+                return target.permute(0, 1, 4, 2, 3)
+        return target

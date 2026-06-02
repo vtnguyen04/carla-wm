@@ -13,5 +13,17 @@
 # limitations under the License.
 
 from .transformer_block import TransformerBlock
+from .multi_layer_perceptron import MultiLayerPerceptron
+from .conv_neural_network import ConvNeuralNetwork
+from .conv_transpose_neural_network import ConvTransposeNeuralNetwork
+from .attention_module import AttentionModule
+from .feed_forward_module import FeedForwardModule
 
-__all__ = ['TransformerBlock']
+__all__ = [
+    'TransformerBlock',
+    'MultiLayerPerceptron',
+    'ConvNeuralNetwork',
+    'ConvTransposeNeuralNetwork',
+    'AttentionModule',
+    'FeedForwardModule',
+]

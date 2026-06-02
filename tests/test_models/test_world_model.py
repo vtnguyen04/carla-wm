@@ -25,13 +25,14 @@ def test_model():
 def test_world_model_forward(test_model, dummy_batch):
     B, L = 2, 4
     test_model.config.L = L  # Add config.L requirement for world_model indexing
-    test_model.encoder_network.dim_concat = 256
+    embed_dim = test_model.dynamics_model.obs_out.in_features - test_model.config.hidden_size
+    test_model.encoder_network.dim_concat = embed_dim
     test_model.encoder_network.forward = unittest.mock.MagicMock()
     test_model.encoder_network.forward.return_value = {
         "stoch": torch.randn(B, L, test_model.config.stoch_size, test_model.config.discrete),
         "logits": torch.randn(B, L, test_model.config.stoch_size, test_model.config.discrete),
-        "latent": torch.randn(B, L, 256),
-        "state_seq": torch.randn(B, L, 256),
+        "latent": torch.randn(B, L, embed_dim),
+        "state_seq": torch.randn(B, L, embed_dim),
         "hidden": [(torch.randn(B, L, test_model.config.hidden_size), torch.randn(B, L, test_model.config.hidden_size))],
     }
     test_model.decoder_network.forward = unittest.mock.MagicMock(return_value={})

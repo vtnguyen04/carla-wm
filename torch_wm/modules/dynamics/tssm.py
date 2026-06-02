@@ -16,6 +16,7 @@ from typing import List, Dict, Tuple, Optional, Any, Union
 # PyTorch
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 # NeuralNets
 from torch_wm import modules
@@ -196,12 +197,21 @@ class TSSM(nn.Module):
         return posts, priors
 
     def imagine(self, p_net, prev_state, img_steps=1, is_firsts=None, is_firsts_hidden=None, actions=None):
-        policy = lambda s: p_net(self.get_feat(s).detach()).rsample()
+        def policy_fn(s):
+            """Policy that returns both one-hot action AND raw ODE logits."""
+            dist = p_net(self.get_feat(s).detach())
+            # Handle standard distributions vs custom wrappers
+            action = dist.rsample() if hasattr(dist, "rsample") else dist.sample()
+            action_logits = dist.x if hasattr(dist, "x") else action
+            return action, action_logits
+
         if actions is None:
-            prev_state["action"] = policy(prev_state)
+            action, action_logits = policy_fn(prev_state)
+            prev_state["action"] = action
         else:
             prev_state["action"] = actions[:, :1]
-        img_states = {"stoch": [prev_state["stoch"]], "deter": [prev_state["deter"]], "logits": [prev_state["logits"]], "action": [prev_state["action"]]}
+            action_logits = torch.zeros_like(actions[:, :1])  # placeholder for given actions
+        img_states = {"stoch": [prev_state["stoch"]], "deter": [prev_state["deter"]], "logits": [prev_state["logits"]], "action": [prev_state["action"]], "action_logits": [action_logits]}
         for h in range(img_steps):
             hidden_len_val = self.get_hidden_len(prev_state["hidden"])
             mask = modules.return_mask(seq_len=1, hidden_len=hidden_len_val, left_context=self.att_context_left, right_context=0, dtype=prev_state["action"].dtype, device=prev_state["action"].device)
@@ -212,14 +222,17 @@ class TSSM(nn.Module):
                 is_firsts = torch.zeros_like(is_firsts)
             img_state = self.forward_img(prev_states=prev_state, prev_actions=prev_state["action"], mask=mask)
             if actions is None or h==img_steps-1:
-                img_state["action"] = policy(img_state)
+                action, action_logits = policy_fn(img_state)
+                img_state["action"] = action
             else:
                 img_state["action"] = actions[:, h+1:h+2]
+                action_logits = torch.zeros_like(actions[:, h+1:h+2])
             img_state["hidden"] = self.slice_hidden(img_state["hidden"])
             prev_state = img_state
             for key, value in img_state.items():
                 if key != "hidden":
                     img_states[key].append(value)
+            img_states["action_logits"].append(action_logits)
         img_states = {k: torch.concat(v, dim=1) for k, v in img_states.items()}
         return img_states
 
@@ -255,6 +268,7 @@ class TSSM(nn.Module):
             return 0
 
     def forward_img(self, prev_states, prev_actions, mask, return_att_w=False, return_blocks_deter=False):
+        prev_actions = self._match_action_dim(prev_actions)
         if isinstance(self.action_clip, (int, float)) and self.action_clip > 0.0:
             prev_actions = prev_actions * (self.action_clip / torch.clip(torch.abs(prev_actions), min=self.action_clip)).detach()
         batch_size = prev_actions.shape[0]
@@ -281,6 +295,7 @@ class TSSM(nn.Module):
         return {"deter": deter, "hidden": hidden, **states}
 
     def forward(self, states, prev_states, prev_actions, is_firsts, is_firsts_hidden=None, return_att_w=False, return_blocks_deter=False):
+        prev_actions = self._match_action_dim(prev_actions)
         if is_firsts.dim() == 3 and is_firsts.shape[-1] == 1:
             is_firsts = is_firsts.squeeze(-1)
         if prev_actions.dim() != 3:
@@ -311,3 +326,11 @@ class TSSM(nn.Module):
         if return_blocks_deter:
             post["blocks_deter"] = prior["blocks_deter"]
         return post, prior
+
+    def _match_action_dim(self, actions):
+        if actions is None or actions.shape[-1] == self.num_actions:
+            return actions
+        if actions.shape[-1] > self.num_actions:
+            return actions[..., :self.num_actions]
+        pad = self.num_actions - actions.shape[-1]
+        return F.pad(actions, (0, pad))

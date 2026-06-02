@@ -19,5 +19,4 @@ from .act_funs import *
 from .norms import *
 from .attentions import *
 from .networks import *
-from .modules import *
 from .blocks import *

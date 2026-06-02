@@ -51,10 +51,8 @@ class LogComposer:
         """Called once before training begins."""
         self.rich.print_banner()
         self.rich.print_hardware()
-        self.rich.print_config(self.config)
-        self.rich.print_losses(self.config)
         self.rich.print_replay(replay, sample)
-        self.rich.print_architecture(model)
+        self.rich.print_encoder_branches(model)
 
         # WandB model info
         self.wandb.log_model_summary(model)

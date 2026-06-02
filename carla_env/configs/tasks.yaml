@@ -3,26 +3,14 @@ carla_wpt:
   reward:
     desired_speed: 5.55 # desired speed (m/s) ≈ 20 km/h
     scales:
-      # ─── T1: SAFETY (reduced to prevent idle-is-optimal) ───
-      collision: 10.0              # Reduced from 50 — was making idle optimal over driving
-      proximity: 3.0               # Reduced from 10
-      # ─── T2: TRAFFIC LAW ───
-      traffic_light_obey: 2.0
-      stop_sign: 5.0               # Reduced from 10
-      speeding: 3.0                # Reduced from 5
-      traffic_light_violate: 10.0  # Reduced from 20
-      # ─── T3: NAVIGATION (boosted to incentivize driving) ───
-      waypoint: 8.0                # Boosted from 5 — main forward driving signal
-      speed: 3.0                   # Boosted from 1 — strong incentive to maintain speed
+      waypoint: 5
+      speed: 0.5
+      collision: 30.0
       out_of_lane: 1.0
-      centerline: 1.0              # Boosted from 0.5
-      heading: 0.5
-      destination_reached: 100.0   # Boosted from 50 — big completion bonus
-      time: 0.05                   # Boosted from 0.01 — stronger anti-loitering
-      # ─── T4: COMFORT (0.25-0.5x) ───
-      steer_rate: 0.5
-      steer_jerk: 0.25
-      speed_steer: 0.25
+      time: 0.0
+      standstill: 1
+      destination_reached: 20.0
+      smoothness: 2
   terminal:
     time_limit: 1500 # maximum timesteps per episode
     out_lane_thres: 5.0 # threshold for out of lane

@@ -13,7 +13,7 @@ env:
 
   observation:
     camera:
-      handler: camera
+      handler: camera 
       blueprint: sensor.camera.rgb
       key: camera
       shape: [128, 128, 3]
@@ -170,9 +170,9 @@ env:
   action:
     discrete: True
     # Ultra-fine granularity for Expert Collection (11x21 = 231 actions)
-    discrete_acc: [-1.5, 0.5, 1.5, 3.0]
-    discrete_steer: [-1.0, -0.8, -0.6, -0.4, -0.2, 0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
-    continuous_acc: [-3.0, 3.0]
+    discrete_acc: [-2.0, 0.0, 2.0]
+    discrete_steer: [-0.6, -0.4, -0.2, 0.0, 0.2, 0.4, 0.6]
+    continuous_acc: [-2.0, 2.0]
     continuous_steer: [-1.0, 1.0]
     n_commands: 3
 

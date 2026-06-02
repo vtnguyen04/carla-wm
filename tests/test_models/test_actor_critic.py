@@ -45,19 +45,18 @@ def test_model():
     
     # Needs some reward tracking for lambda returns
     import unittest.mock
-    mock_dist = unittest.mock.MagicMock()
-    mock_mean = torch.randn(N, 1 + H, 1)
-    mock_dist.mean = unittest.mock.MagicMock(return_value=mock_mean)
-    mock_dist.mode = mock_mean
     
-    model.reward_network.forward = unittest.mock.MagicMock(return_value=mock_dist)
-    model.continue_network.forward = unittest.mock.MagicMock(return_value=mock_dist)
-    
-    mock_dist_v = unittest.mock.MagicMock()
-    mock_mean_v = torch.randn(N, 1 + H, 1)
-    mock_dist_v.mean = unittest.mock.MagicMock(return_value=mock_mean_v)
-    mock_dist_v.mode = mock_mean_v
-    model.v_target.forward = unittest.mock.MagicMock(return_value=mock_dist_v)
+    def mock_dist_fn(feats):
+        B_L, seq_len, _ = feats.shape
+        dist = unittest.mock.MagicMock()
+        mean_val = torch.randn(B_L, seq_len, 1)
+        dist.mean = unittest.mock.MagicMock(return_value=mean_val)
+        dist.mode = mean_val
+        return dist
+        
+    model.reward_network.forward = unittest.mock.MagicMock(side_effect=mock_dist_fn)
+    model.continue_network.forward = unittest.mock.MagicMock(side_effect=mock_dist_fn)
+    model.v_target.forward = unittest.mock.MagicMock(side_effect=mock_dist_fn)
     
     return model
 

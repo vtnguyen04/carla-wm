@@ -107,19 +107,19 @@ class ModularExpert:
             # 1. Final Stop Zone (3.5m is a safe buffer for most CARLA vehicles)
             if dist_to_red_light < 3.5 or (dist_to_red_light < 5.0 and current_speed_ms < 0.1):
                 desired_acc, status = -3.0, "RED STOP"
-            
+
             # 2. Dynamic Approach Zone (Slowly crawl to the stop line)
             elif dist_to_red_light < 15.0:
                 # Target speed decreases linearly as we get closer: 5 km/h at 15m down to 2 km/h at 5m
                 target_approach_ms = max(1.0, (dist_to_red_light / 15.0) * (5.0 / 3.6))
-                
+
                 if current_speed_ms > target_approach_ms:
-                    desired_acc = -1.5
+                    desired_acc = -2.0
                     status = f"RED BRAKING {dist_to_red_light:.1f}m"
                 else:
-                    desired_acc = 1.0
+                    desired_acc = 2.0
                     status = f"RED APPROACH {dist_to_red_light:.1f}m"
-            
+
             # 3. Long Distance Approach
             else:
                 target_approach_ms = 10.0 / 3.6 # Approach distant red lights at 10 km/h
@@ -132,15 +132,15 @@ class ModularExpert:
         else:
             speed_diff = target_speed - current_speed_ms
             if speed_diff > 2.0:
-                desired_acc, status = 3.0, "HARD ACCEL"
+                desired_acc, status = 2.0, "HARD ACCEL"
             elif speed_diff > 0.8:
                 desired_acc, status = 2.0, "ACCELERATING"
             elif speed_diff > 0.0:
-                desired_acc, status = 1.0, "CRUISING"
+                desired_acc, status = 2.0, "CRUISING"
             elif speed_diff > -0.5:
                 desired_acc, status = 0.0, "COASTING"
             else:
-                desired_acc, status = -1.0, "LIMIT BRAKE"
+                desired_acc, status = -2.0, "LIMIT BRAKE"
 
         acc_idx = np.argmin(np.abs(np.array(self.d_acc) - desired_acc))
         steer_idx = np.argmin(np.abs(np.array(self.d_steer) - smooth_steer))

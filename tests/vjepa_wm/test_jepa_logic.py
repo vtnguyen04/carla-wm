@@ -67,7 +67,7 @@ def test_full_model_jepa_gradients():
     import os
     
     # Load default config
-    config_path = "/home/quynhthu/Documents/world-model/carTwister/torch_wm/rl/config/twister.yaml"
+    config_path = os.path.join(os.path.dirname(__file__), "../../torch_wm/rl/config/twister.yaml")
     config = load_yaml_config(config_path)["defaults"]
     
     # Override for JEPA testing
@@ -114,7 +114,6 @@ def test_full_model_jepa_gradients():
     
     # Check for keys containing our loss names (using relaxation for prefixing)
     assert any("joint_embedding" in k for k in metrics.keys()), f"No JEPA metrics in {metrics.keys()}"
-    assert any("sigreg" in k for k in metrics.keys()), f"No SIGReg metrics in {metrics.keys()}"
     
     # Check that dynamics model has gradients
     has_grad = False

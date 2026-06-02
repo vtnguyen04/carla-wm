@@ -70,9 +70,19 @@ class WorldModel(BaseModel):
         )
         feats = self.outer.dynamics_model.get_feat(posts)
         
+        # TWISTER parity: decoder receives ONLY stoch (not feats=stoch+deter)
+        # This forces the encoder to push all visual info into the stochastic variable,
+        # preventing entropy collapse. See TWISTER line 839.
+        stoch_flat = posts["stoch"].flatten(-2, -1) if posts["stoch"].dim() > 3 else posts["stoch"]
+        
+        if self.outer.config.dynamics_type == "rssm":
+            decoder_input = torch.cat([posts["deter"], stoch_flat], dim=-1)
+        else:
+            decoder_input = stoch_flat
+            
         model_outputs = {
             "posts": posts, "priors": priors, "feats": feats, "latent": latent_features,
-            "states_rec_dist": self.outer.decoder_network(feats),
+            "states_rec_dist": self.outer.decoder_network(decoder_input),
             "model_rewards": self.outer.reward_network(feats),
             "model_discounts": self.outer.continue_network(feats),
             "signal_features": signal_features,
@@ -95,6 +105,8 @@ class WorldModel(BaseModel):
         
         for name, val in losses.items():
             if name != "total": self.add_loss(name, val, 1.0)
+        if "total" in losses:
+            self.add_metric("total_loss", losses["total"].detach())
         
         # Collect and add metrics
         metrics = self.loss_manager.get_metrics()

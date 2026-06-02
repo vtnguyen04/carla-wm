@@ -120,7 +120,7 @@ def main(argv=None):
     model_configs = yaml.YAML(typ="safe").load(
         (embodied.Path(__file__).parent / "config" / "dreamerv3.yaml").read()
     )
-    temp_flags = embodied.Flags(method="wm_agent", model_size="defaults")
+    temp_flags = embodied.Flags(method="twister", model_size="defaults")
     temp_parsed, temp_other = temp_flags.parse_known(argv)
     method = temp_parsed.method
     model_size = temp_parsed.model_size
