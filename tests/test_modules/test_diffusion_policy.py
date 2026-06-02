@@ -7,6 +7,10 @@ import torch
 import yaml
 import sys
 import traceback
+from pathlib import Path
+
+
+CONFIG_PATH = Path(__file__).resolve().parents[2] / "torch_wm/rl/config/twister.yaml"
 
 
 def _test_device():
@@ -98,6 +102,10 @@ def test_sit_policy_unit():
     assert action_seq.shape == (4, 15, 7), f"FAIL: seq rsample shape {action_seq.shape}"
     print(f"  [PASS] Sequence forward shape = {action_seq.shape}")
 
+    loss_seq = net.compute_loss(feat_seq, torch.randn(4, 15, 7, device=device))
+    assert loss_seq.shape == (4, 15), f"FAIL: seq compute_loss shape {loss_seq.shape}"
+    print(f"  [PASS] Sequence compute_loss shape = {loss_seq.shape}")
+
     print("  ✅ ALL SiTPolicyNetwork unit tests PASSED\n")
 
 
@@ -138,6 +146,12 @@ def test_diffusion_policy_unit():
     assert has_grad, "FAIL: No gradient!"
     print(f"  [PASS] compute_loss() backward OK, loss = {loss.mean().item():.4f}")
 
+    feat_seq = torch.randn(4, 15, 1536, device=device)
+    action_seq = torch.randn(4, 15, 7, device=device)
+    loss_seq = net.compute_loss(feat_seq, action_seq)
+    assert loss_seq.shape == (4, 15), f"FAIL: seq compute_loss shape {loss_seq.shape}"
+    print(f"  [PASS] Sequence compute_loss shape = {loss_seq.shape}")
+
     print("  ✅ ALL DiffusionPolicyNetwork unit tests PASSED\n")
 
 
@@ -148,7 +162,7 @@ def test_imagine_compatibility():
     print("=" * 60)
 
     from torch_wm.models.unified_agent import UnifiedAgent
-    with open('/home/db/Documents/carla-wm/torch_wm/rl/config/twister.yaml', 'r') as f:
+    with CONFIG_PATH.open("r") as f:
         config = yaml.safe_load(f)
 
     agent = UnifiedAgent(env_name="carla", override_config=config["defaults"])
@@ -216,7 +230,7 @@ def test_actor_backward():
     print("=" * 60)
 
     from torch_wm.models.unified_agent import UnifiedAgent
-    with open('/home/db/Documents/carla-wm/torch_wm/rl/config/twister.yaml', 'r') as f:
+    with CONFIG_PATH.open("r") as f:
         config = yaml.safe_load(f)
 
     agent = UnifiedAgent(env_name="carla", override_config=config["defaults"])
@@ -286,7 +300,7 @@ def test_act_inference():
     print("=" * 60)
 
     from torch_wm.models.unified_agent import UnifiedAgent
-    with open('/home/db/Documents/carla-wm/torch_wm/rl/config/twister.yaml', 'r') as f:
+    with CONFIG_PATH.open("r") as f:
         config = yaml.safe_load(f)
 
     agent = UnifiedAgent(env_name="carla", override_config=config["defaults"])

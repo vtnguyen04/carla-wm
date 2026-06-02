@@ -134,19 +134,20 @@ class DiffusionPolicyNetwork(nn.Module):
 
     def compute_loss(self, state_feat, action):
         """Compute the DDPM MSE loss for training."""
-        B = action.shape[0]
         device = action.device
 
         # Sample random timesteps
-        t = torch.randint(0, self.n_timesteps, (B,), device=device).float()
+        t_shape = action.shape[:-1]
+        t = torch.randint(0, self.n_timesteps, t_shape, device=device).float()
 
         # Add noise to true actions
         noise = torch.randn_like(action)
 
         # Reshape for broadcasting
         t_idx = t.long()
-        sqrt_alpha = self.sqrt_alphas_cumprod[t_idx].view(-1, 1)
-        sqrt_one_minus = self.sqrt_one_minus_alphas_cumprod[t_idx].view(-1, 1)
+        broadcast_shape = t_shape + (1,)
+        sqrt_alpha = self.sqrt_alphas_cumprod[t_idx].view(broadcast_shape)
+        sqrt_one_minus = self.sqrt_one_minus_alphas_cumprod[t_idx].view(broadcast_shape)
 
         # x_t = sqrt(alpha_bar) * x_0 + sqrt(1 - alpha_bar) * epsilon
         x_t = sqrt_alpha * action + sqrt_one_minus * noise

@@ -120,18 +120,18 @@ class SiTPolicyNetwork(nn.Module):
         x_t = t * x_1 + (1 - t) * x_0  (linear interpolant)
         Target velocity v_t = x_1 - x_0
         """
-        B = action.shape[0]
         device = action.device
 
         # Sample random continuous time t in [0, 1]
-        t = torch.rand((B,), device=device)
+        t_shape = action.shape[:-1]
+        t = torch.rand(t_shape, device=device)
 
         # Base noise distribution x_0
         x_0 = torch.randn_like(action)
         x_1 = action
 
         # Reshape t for broadcasting
-        t_view = t.view(-1, 1)
+        t_view = t.view(t_shape + (1,))
 
         # Interpolant (Straight line from x_0 to x_1)
         x_t = t_view * x_1 + (1.0 - t_view) * x_0
