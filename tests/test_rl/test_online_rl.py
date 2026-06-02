@@ -194,7 +194,8 @@ def test_online_collect(tmp_path):
         "collect.py",
         "--logdir", str(tmp_path / "collect"),
         "--task", "dummy_env",
-        "--steps", "8"
+        "--steps", "8",
+        "--device", "cpu",
     ]
     
     with mock.patch.object(sys, "argv", test_args):
