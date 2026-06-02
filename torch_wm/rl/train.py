@@ -15,6 +15,11 @@ Usage:
 import pathlib
 import warnings
 
+import os
+
+os.environ["TORCH_USE_CUDA_DSA"] = "1"
+os.environ["TORCH_CUDA_ARCH_LIST"] = "8.0;8.6;8.9;9.0;10.0;12.0;12.0a"
+os.environ["TRITON_CACHE_DIR"] = "/tmp/triton_cache_" + str(os.getpid())
 from torch_wm.rl._setup_path import setup
 from embodied.core.wrappers import InfoWrapper; setup()
 
@@ -57,6 +62,44 @@ class FilterObs(embodied.Wrapper):
         return new_obs, info
 
 
+class ExpertPolicy:
+    def __init__(self, env, d_steer, d_acc, target_speed_ms=40.0/3.6):
+        self.env = env
+        self.d_steer = d_steer
+        self.d_acc = d_acc
+        import numpy as np
+        import sys, pathlib
+        scripts_path = pathlib.Path(__file__).resolve().parent.parent.parent / "scripts"
+        if str(scripts_path) not in sys.path:
+            sys.path.append(str(scripts_path))
+        from collect_expert_data import ModularExpert
+        self.expert = ModularExpert(d_steer, d_acc, target_speed_ms)
+
+    def __call__(self, obs, state=None, mode='train'):
+        import numpy as np
+        raw_env = self.env._envs[0]
+        while hasattr(raw_env, "_env"): raw_env = raw_env._env
+        if hasattr(raw_env, "env"): raw_env = raw_env.env
+        if hasattr(raw_env, "unwrapped"): raw_env = raw_env.unwrapped
+
+        ego = raw_env.get_ego_vehicle()
+        if ego is None or not ego.is_alive:
+            action_idx = np.random.randint(len(self.d_steer) * len(self.d_acc))
+        else:
+            wpts, _ = raw_env.ego_planner.run_step()
+            vel = ego.get_velocity()
+            current_speed_ms = np.sqrt(vel.x**2 + vel.y**2 + vel.z**2)
+            env_info = raw_env.last_info if hasattr(raw_env, "last_info") else {}
+            action_idx, _, _, _ = self.expert.plan(
+                ego, raw_env._world.carla_world, wpts, current_speed_ms, env_info
+            )
+
+        total_actions = len(self.d_steer) * len(self.d_acc)
+        one_hot = np.zeros(total_actions, dtype=np.float32)
+        one_hot[action_idx] = 1.0
+        return {'action': np.expand_dims(one_hot, 0)}, state
+
+
 def wrap_env(env, config):
     """Apply standard embodied wrappers for RL training."""
     args = config.wrapper
@@ -85,9 +128,9 @@ def wrap_env(env, config):
 
 def main(argv=None):
     # Initial flags to determine which config file to load
-    temp_flags = embodied.Flags(method="dreamerv3", model_size="defaults")
+    temp_flags = embodied.Flags(method="twister", model_size="defaults")
     temp_parsed, remaining = temp_flags.parse_known(argv)
-    
+
     method = temp_parsed.method
     model_size = temp_parsed.model_size
 
@@ -106,10 +149,21 @@ def main(argv=None):
         config = config.update(model_configs[model_size])
 
     parsed, other = embodied.Flags(task=["carla_navigation"]).parse_known(remaining)
+    
+    env_args = list(other)
+    if "env_params" in config:
+        for k, v in embodied.Config(config.env_params).flat.items():
+            if isinstance(v, (list, tuple)):
+                val_str = ",".join(str(x) for x in v)
+            else:
+                val_str = str(v)
+            # carla_env expects keys to start with 'env.' (e.g. --env.action.discrete_acc)
+            env_args.append(f"--env.{k}={val_str}")
+
     env = None
     for name in parsed.task:
         log.info(f"Using task: {name}")
-        env, env_config = carla_env.create_task(name, other)
+        env, env_config = carla_env.create_task(name, env_args)
         config = config.update(env_config)
 
     config = embodied.Flags(config).parse(other)
@@ -118,7 +172,17 @@ def main(argv=None):
     logdir = embodied.Path(config.logdir)
     step = embodied.Counter()
     outputs = [
-        embodied.logger.TerminalOutput(pattern=r".*return$|.*_loss$|.*_lr$"),
+        embodied.logger.TerminalOutput(
+            # Match all monitoring groups for full terminal visibility
+            pattern=r".*return$|.*_loss$|.*_lr$"
+                    r"|^train/heads/.*"      # Reward/Continue head quality
+                    r"|^train/latent/.*"      # Latent space health
+                    r"|^train/rl/.*"          # Returns, value predictions
+                    r"|^train/actor/.*"       # Advantage, entropy, AWR, SiT MSE
+                    r"|^train/grads/.*_norm$" # Gradient norms only (skip n_params)
+                    r"|^train/env/.*"         # Batch rewards, terminal rate
+                    r"|^train/optim/.*"       # Learning rates, grad norms
+        ),
         embodied.logger.JSONLOutput(logdir, "metrics.jsonl"),
     ]
     if config.get("tensorboard", True):
@@ -182,6 +246,10 @@ def main(argv=None):
             #   4. Store transition in replay
             #   5. Sample batch from replay → Agent.train(batch)
             #   6. Repeat until done
+            d_acc = list(config.env_params.action.discrete_acc)
+            d_steer = list(config.env_params.action.discrete_steer)
+            expert_policy = ExpertPolicy(env, d_steer, d_acc)
+
             embodied.run.train(agent, env, replay, logger, run_args)
 
         finally:

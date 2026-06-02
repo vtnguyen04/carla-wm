@@ -70,34 +70,7 @@ class RichLogger:
             t.add_row(name, str(val), desc)
         self.console.print(t)
 
-    # ── Model Architecture ──
-    def print_architecture(self, model):
-        t = Table(title="[bold magenta]🧠 Architecture[/bold magenta]", box=box.DOUBLE_EDGE)
-        t.add_column("Component", style="cyan", width=28)
-        t.add_column("Params", style="green", justify="right", width=12)
-        t.add_column("Details", style="dim", width=32)
-
-        components = [
-            ("Encoder (Multi-Branch)", model.encoder_network,
-             f"Branches: {list(model.encoder_network.encoders.keys())}"),
-            ("Decoder (Multi-Branch)", model.decoder_network, "Feat → Image"),
-            ("TSSM", model.dynamics_model, f"Blocks: {model.config.num_blocks_trans}"),
-            ("Policy", model.policy_network, f"Actions: {model.dynamics_model.num_actions}"),
-            ("Value", model.value_network, "Critic head"),
-            ("Reward", model.reward_network, "Reward prediction"),
-            ("Continue", model.continue_network, "Discount prediction"),
-            ("CPC", model.contrastive_network, f"Heads: {len(model.contrastive_network)}"),
-            ("Loss Manager (JEPA)", model.world_model.loss_manager, "Learnable Projectors"),
-        ]
-        total = 0
-        for name, mod, det in components:
-            p = sum(x.numel() for x in mod.parameters())
-            total += p
-            t.add_row(name, f"{p:,}", det)
-        t.add_section()
-        t.add_row("[bold]TOTAL[/bold]", f"[bold]{total:,}[/bold]", "")
-        self.console.print(t)
-
+    def print_encoder_branches(self, model):
         # Encoder branches
         et = Table(title="[bold blue]📡 Encoder Branches[/bold blue]", box=box.ROUNDED)
         et.add_column("Branch", style="cyan")
@@ -116,6 +89,21 @@ class RichLogger:
         if model.encoder_network.dim_signal > 0:
             et.add_row("[bold]Signal[/bold]", "", "", f"[bold]{model.encoder_network.dim_signal}[/bold]", "")
         self.console.print(et)
+
+    def print_architecture(self, model):
+        """Print a compact model overview plus encoder branch details."""
+        params = sum(p.numel() for p in model.parameters())
+        t = Table(title="[bold blue]🏗️  Architecture[/bold blue]", box=box.DOUBLE_EDGE)
+        t.add_column("Component", style="cyan", width=24)
+        t.add_column("Value", style="white", width=32)
+        t.add_row("Model", type(model).__name__)
+        t.add_row("Parameters", f"{params:,}")
+        if hasattr(model, "config"):
+            t.add_row("Hidden Size", str(getattr(model.config, "hidden_size", "N/A")))
+            t.add_row("Stochastic Size", str(getattr(model.config, "stoch_size", "N/A")))
+        self.console.print(t)
+        if hasattr(model, "encoder_network") and hasattr(model.encoder_network, "encoders"):
+            self.print_encoder_branches(model)
 
     # ── Loss Config ──
     def print_losses(self, config):

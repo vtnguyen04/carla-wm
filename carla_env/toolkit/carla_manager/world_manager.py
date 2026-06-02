@@ -55,8 +55,8 @@ class WorldManager:
                 log.info("[CARLA] IPC: Using optimized TCP connection")
                 self._client = carla.Client("127.0.0.1", self._config.carla_port)
 
-            # Reasonable timeout to avoid crashes during map changes
-            self._client.set_timeout(60.0)
+            # Reasonable timeout to avoid crashes during map changes and JIT compilation
+            self._client.set_timeout(300.0)
 
             # Access underlying socket for low-level optimization
             import socket
