@@ -3,11 +3,12 @@ from unittest.mock import patch, MagicMock
 from torch_wm.rl.train import main
 import embodied
 
+@patch('embodied.run.train')
 @patch('torch_wm.rl.train.WorldModelAgent')
 @patch('embodied.Logger')
 @patch('carla_env.create_task')
 @patch('embodied.replay.Uniform')
-def test_train_setup(mock_replay, mock_create_task, mock_logger, mock_agent):
+def test_train_setup(mock_replay, mock_create_task, mock_logger, mock_agent, mock_run_train):
     mock_agent_inst = MagicMock()
     mock_agent.return_value = mock_agent_inst
     

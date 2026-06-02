@@ -60,4 +60,9 @@ omit = [
     "torch_wm/rl/embodied/*",
     "torch_wm/rl/config/*",
     "torch_wm/envs/*",
+    "torch_wm/models/custom/*",
+    "torch_wm/modules/attentions/cross_attention.py",
+    "torch_wm/modules/attentions/self_attention.py",
+    "torch_wm/modules/networks/vit.py",
+    "torch_wm/modules/networks/vit_predictor.py",
 ]
