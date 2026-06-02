@@ -351,4 +351,6 @@ Please keep unrelated debug files, scratch outputs, replay buffers, and logs out
 
 ## License
 
-No root-level license file is currently included in this repository. Add a `LICENSE` file before distributing the project as open source or reusing it outside its current private/research context.
+This repository is distributed under the Apache License 2.0. See [LICENSE](LICENSE) for the full terms and [NOTICE](NOTICE) for upstream attribution.
+
+Several world-model components are derived from or adapted against [burchim/TWISTER](https://github.com/burchim/TWISTER), which is also Apache-2.0 licensed. Files that contain TWISTER-derived portions retain the upstream notice and add project modification ownership where applicable; files implemented for this project use the project copyright only. Other third-party components keep their original source-file notices where applicable.

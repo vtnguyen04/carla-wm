@@ -1,0 +1,19 @@
+CARLA World Model
+
+This project includes code and adaptations from the following upstream works:
+
+- TWISTER by Maxime Burchi and Radu Timofte:
+  https://github.com/burchim/TWISTER
+  Licensed under the Apache License, Version 2.0.
+  Copyright 2025, Maxime Burchi.
+  Portions adapted for CARLA World Model include substantial project
+  modifications and refactoring by Vo Thanh Nguyen.
+
+- CARLA autonomous driving agent components preserve their original source-file
+  notices from Intel Labs and the Computer Vision Center (CVC).
+
+- Selected V-JEPA/Vision Transformer components preserve their original
+  source-file notices from Facebook, Inc. and its affiliates.
+
+- Selected DreamerV3 configuration and environment utilities preserve their
+  original source-file notices from Danijar Hafner where applicable.

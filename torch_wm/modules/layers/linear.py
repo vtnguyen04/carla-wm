@@ -1,5 +1,6 @@
 from typing import List, Dict, Tuple, Optional, Any, Union
 # Copyright 2025, Maxime Burchi.
+# Modifications copyright 2026, Vo Thanh Nguyen.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
