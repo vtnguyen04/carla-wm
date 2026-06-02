@@ -16,16 +16,17 @@ from .transformer_network import TransformerNetwork
 from .encoder_network import MultiEncoderNetwork
 from .decoder_network import MultiDecoderNetwork
 from .policy_network import PolicyNetwork
-from .value_network import ValueNetwork
-from .reward_network import RewardNetwork
-from .continue_network import ContinueNetwork
+from .dense_head import DenseHead
 from .contrastive_network import ContrastiveNetwork
 from .vjepa_encoder import VJEPAEncoderNetwork
+from .diffusion_policy import DiffusionPolicyNetwork
+from .sit_policy import SiTPolicyNetwork
 
 __all__ = [
     'TransformerNetwork', 
     'MultiEncoderNetwork',
     'MultiDecoderNetwork',
-    'PolicyNetwork', 'ValueNetwork', 'RewardNetwork',
-    'ContinueNetwork', 'ContrastiveNetwork', 'VJEPAEncoderNetwork'
+    'PolicyNetwork', 'DenseHead',
+    'ContrastiveNetwork', 'VJEPAEncoderNetwork',
+    'DiffusionPolicyNetwork', 'SiTPolicyNetwork'
 ]

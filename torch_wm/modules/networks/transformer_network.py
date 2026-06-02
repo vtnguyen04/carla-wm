@@ -6,6 +6,7 @@ from torch.utils import checkpoint
 # NeuralNets
 from torch_wm import modules
 from torch_wm import structs
+from torch_wm.utils.checkpoint import checkpoint_forward
 
 class TransformerNetwork(nn.Module):
 
@@ -91,22 +92,14 @@ class TransformerNetwork(nn.Module):
             key_hidden = hidden[block_id] if hidden is not None else None
             
             # ── Gradient Checkpointing ──
-            if self.use_checkpointing and self.training:
-                # Note: we need to wrap the call because checkpoint doesn't support keyword args in old versions
-                # and to ensure the AttrDict return is handled correctly.
-                def create_custom_forward(module):
-                    def custom_forward(*inputs):
-                        return module(*inputs, return_hidden=return_hidden, return_att_w=return_att_w)
-                    return custom_forward
-
-                block_outputs = checkpoint.checkpoint(
-                    create_custom_forward(block),
-                    outputs.x, mask, key_hidden,
-                    use_reentrant=False # modern checkpointing
-                )
-            else:
-                # Standard Forward
-                block_outputs = block(outputs.x, mask=mask, hidden=key_hidden, return_hidden=return_hidden, return_att_w=return_att_w)
+            block_outputs = checkpoint_forward(
+                block,
+                outputs.x, mask, key_hidden,
+                use_checkpointing=self.use_checkpointing,
+                training=self.training,
+                return_hidden=return_hidden,
+                return_att_w=return_att_w
+            )
 
             # Parse block output
             outputs.x = block_outputs.x

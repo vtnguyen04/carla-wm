@@ -19,7 +19,9 @@ import torch.nn as nn
 # NeuralNets
 from torch_wm import modules
 from torch_wm import distributions
+from torch_wm import distributions
 from torch_wm.structs import AttrDict
+from torch_wm.utils.checkpoint import checkpoint_forward
 
 class DecoderNetwork(nn.Module):
 
@@ -35,6 +37,7 @@ class DecoderNetwork(nn.Module):
         dist_weight_init="zeros",
         dist_bias_init="zeros",
         image_size=(64, 64),
+        use_checkpointing=False,
         **kwargs
     ):
         super(DecoderNetwork, self).__init__()
@@ -43,6 +46,7 @@ class DecoderNetwork(nn.Module):
         self.dim_output_cnn = dim_output_cnn
         self.dim_cnn = dim_cnn
         self.image_size = image_size
+        self.use_checkpointing = use_checkpointing
 
 
         # Architecture configuration — 5-layer decoder for sufficient capacity
@@ -98,13 +102,13 @@ class DecoderNetwork(nn.Module):
         x = x.reshape((-1,) + self.dim_root)
 
         # (B * N, C, H, W) -> (B * N, 3, Target_H, Target_W)
-        x = self.cnn(x)
+        x = checkpoint_forward(self.cnn, x, use_checkpointing=self.use_checkpointing, training=self.training)
 
         # (B * N, 3, Target_H, Target_W) -> (B, N, 3, Target_H, Target_W)
-        x = x.reshape(shape[:-1] + x.shape[1:])
+        x = x.reshape(shape[:-1] + (self.dim_output_cnn,) + self.image_size)
 
-        # L1 (Laplace) Loss: Bền vững tuyệt đối. Dùng agg="sum" để gradient từng pixel là 1.0, không bị triệt tiêu khi truyền ngược.
-        obs_dist = distributions.LaplaceDist(x, agg="sum", reinterpreted_batch_ndims=3)
+        # TWISTER and DreamerV3 parity: MSEDist with agg="sum".
+        obs_dist = distributions.MSEDist(x, agg="sum", reinterpreted_batch_ndims=3)
         return obs_dist
 
     def forward(self, inputs):
@@ -134,6 +138,10 @@ class MultiDecoderNetwork(nn.Module):
         super(MultiDecoderNetwork, self).__init__()
 
         self.decoders = nn.ModuleDict()
+        self.use_checkpointing = kwargs.pop("use_checkpointing", False)
+        self.encoder_network = kwargs.pop("encoder_network", None)
+
+        self.inverse_representation = None
 
         # Dynamically create decoders for each enabled sensor with decode=True
         if obs_space is None:
@@ -143,13 +151,15 @@ class MultiDecoderNetwork(nn.Module):
             enabled_keys = obs_config.get("enabled")
             if enabled_keys is None:
                 enabled_keys = [k for k, v in obs_config.items() if isinstance(v, (dict, AttrDict))]
-                
+
             for k in enabled_keys:
                 cfg = obs_config.get(k, {})
                 shape = cfg.get("shape", (3, 64, 64))
                 class SpaceStub:
                     def __init__(self, s): self.shape = s
                 obs_space[k] = SpaceStub(shape)
+
+        branch_feat_sizes = {name: feat_size for name in obs_space.keys()}
 
         for name, space in obs_space.items():
             if len(space.shape) < 3:
@@ -158,24 +168,28 @@ class MultiDecoderNetwork(nn.Module):
             config = obs_config.get(name, AttrDict())
 
             # Skip sensors marked as encode-only (decode=False)
-            if not config.get("decode", True):
+            decode_flag = config.get("decode", True)
+            if isinstance(decode_flag, str):
+                decode_flag = decode_flag.lower() not in ["false", "0", "none"]
+
+            if not decode_flag:
                 continue
 
             # Ensure config is AttrDict
             if not isinstance(config, AttrDict):
                 config = AttrDict(config)
 
-            # Extract image size
-            image_size = (space.shape[1], space.shape[2])
+            channels, image_size = self._parse_image_shape(space.shape)
 
             # Create sub-decoder for this sensor branch
             # Filter image_size from kwargs to avoid duplicate argument error
             filtered_kwargs = {k: v for k, v in kwargs.items() if k != 'image_size'}
-            
+            sub_kwargs = {k: v for k, v in config.items() if k not in ['shape', 'decode']}
+
             self.decoders[name] = DecoderNetwork(
-                feat_size=feat_size,
+                feat_size=branch_feat_sizes[name],
                 dim_cnn=dim_cnn,
-                dim_output_cnn=space.shape[0],
+                dim_output_cnn=channels,
                 act_fun=act_fun,
                 weight_init=weight_init,
                 bias_init=bias_init,
@@ -183,7 +197,8 @@ class MultiDecoderNetwork(nn.Module):
                 dist_weight_init=dist_weight_init,
                 dist_bias_init=dist_bias_init,
                 image_size=image_size,
-                **filtered_kwargs
+                use_checkpointing=self.use_checkpointing,
+                **sub_kwargs
             )
 
     def forward(self, inputs):
@@ -191,3 +206,13 @@ class MultiDecoderNetwork(nn.Module):
         return {
             name: decoder(inputs) for name, decoder in self.decoders.items()
         }
+
+    @staticmethod
+    def _parse_image_shape(shape):
+        if len(shape) == 4:
+            shape = shape[1:] if shape[-1] in (1, 3, 4) else shape[-3:]
+        if len(shape) != 3:
+            raise ValueError(f"Expected image observation shape with 3 dims, got {shape}")
+        if shape[0] in (1, 3, 4):
+            return shape[0], (shape[1], shape[2])
+        return shape[2], (shape[0], shape[1])
