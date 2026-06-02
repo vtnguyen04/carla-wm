@@ -27,7 +27,7 @@ CARLA World Model is a research codebase for learning compact latent dynamics fr
 The current code supports three model families through YAML configuration:
 
 - `dreamerv3`: RSSM dynamics with DreamerV3-style actor, critic, decoder, reward, and continue heads.
-- `twister`: TSSM dynamics with transformer context over latent states.
+- `twister`: TSSM dynamics with transformer context over latent states, inspired by [burchim/TWISTER](https://github.com/burchim/TWISTER).
 - `vjepa`: V-JEPA encoder or predictor experiments for visual representation learning.
 
 It also includes experimental diffusion and SiT policy networks for stochastic action generation and policy training research.
@@ -352,4 +352,3 @@ Please keep unrelated debug files, scratch outputs, replay buffers, and logs out
 ## License
 
 No root-level license file is currently included in this repository. Add a `LICENSE` file before distributing the project as open source or reusing it outside its current private/research context.
-
